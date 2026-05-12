@@ -2,13 +2,15 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-// Loader2 ko import kiya gaya hai loading spinner ke liye
-import { ArrowUp, PanelLeftClose, Trash2, X, Menu, Loader2, Divide } from "lucide-react";
+import { ArrowUp, PanelLeftClose, Trash2, X, Menu, Loader2 } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const ThemeToggle = dynamic(() => import("./ThemeToggle"), { ssr: false });
+
+// ── NEW: RAG panel ──────────────────────────────────────────────────────────
+const RagPanel = dynamic(() => import("./RagPanel"), { ssr: false });
 
 type ChatRole = "system" | "user" | "assistant";
 type ChatMessage = { role: ChatRole; content: string; createdAt?: string };
@@ -45,10 +47,10 @@ export default function Home() {
     return raw.replace(/\/+$/, "");
   }, []);
 
-  const apiUrl = useCallback((path: string) => {
-    if (backendBase) return `${backendBase}${path}`;
-    return path;
-  }, [backendBase]);
+  const apiUrl = useCallback(
+    (path: string) => (backendBase ? `${backendBase}${path}` : path),
+    [backendBase]
+  );
 
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -63,6 +65,11 @@ export default function Home() {
   const [isSidebarDesktopOpen, setIsSidebarDesktopOpen] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
+  // ── NEW RAG state ──────────────────────────────────────────────────────────
+  const [ragEnabled, setRagEnabled] = useState(false);
+  const [ragSelectedFileIds, setRagSelectedFileIds] = useState<string[]>([]);
+  const [ragSources, setRagSources] = useState<string[]>([]); // sources from last response
+
   const isAuthed = Boolean(authToken && authUser);
   const greeting = useMemo(() => {
     const h = new Date().getHours();
@@ -76,18 +83,19 @@ export default function Home() {
     [messages]
   );
 
-  const displaySessions = useMemo(() => {
-    return sessions.filter(s => (s.title && s.title !== "New chat") || s.id === activeSessionId);
-  }, [sessions, activeSessionId]);
+  const displaySessions = useMemo(
+    () =>
+      sessions.filter(
+        (s) => (s.title && s.title !== "New chat") || s.id === activeSessionId
+      ),
+    [sessions, activeSessionId]
+  );
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     function sync() {
-      if (mq.matches) {
-        setIsSidebarOpen(false);
-      } else {
-        setIsSidebarDesktopOpen(false);
-      }
+      if (mq.matches) setIsSidebarOpen(false);
+      else setIsSidebarDesktopOpen(false);
     }
     sync();
     mq.addEventListener("change", sync);
@@ -109,20 +117,23 @@ export default function Home() {
         setAuthToken(token);
         setAuthUser(user);
       }
-    } catch { }
+    } catch {}
   }, []);
 
   function logout() {
     try {
       localStorage.removeItem(STORAGE_TOKEN_KEY);
       localStorage.removeItem(STORAGE_USER_KEY);
-    } catch { }
+    } catch {}
     setAuthToken(null);
     setAuthUser(null);
     setSessions([]);
     setActiveSessionId(null);
     setMessages([]);
     setError(null);
+    setRagEnabled(false);
+    setRagSelectedFileIds([]);
+    setRagSources([]);
   }
 
   async function logoutWithLoading() {
@@ -133,23 +144,27 @@ export default function Home() {
     setIsAuthBusy(false);
   }
 
-  const refreshSessions = useCallback(async (tokenOverride?: string) => {
-    const token = tokenOverride ?? authToken;
-    if (!token) {
-      setSessions([]);
-      return [];
-    }
-    try {
-      const data = await fetchJson<{ sessions: SessionMeta[] }>(apiUrl("/sessions"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setSessions(data.sessions);
-      return data.sessions;
-    } catch (e) {
-      console.error("Failed to refresh sessions", e);
-      return [];
-    }
-  }, [apiUrl, authToken]);
+  const refreshSessions = useCallback(
+    async (tokenOverride?: string) => {
+      const token = tokenOverride ?? authToken;
+      if (!token) {
+        setSessions([]);
+        return [];
+      }
+      try {
+        const data = await fetchJson<{ sessions: SessionMeta[] }>(
+          apiUrl("/sessions"),
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        setSessions(data.sessions);
+        return data.sessions;
+      } catch (e) {
+        console.error("Failed to refresh sessions", e);
+        return [];
+      }
+    },
+    [apiUrl, authToken]
+  );
 
   const handleGoogleCredential = useCallback(
     async (credential: string) => {
@@ -166,7 +181,7 @@ export default function Home() {
         try {
           localStorage.setItem(STORAGE_TOKEN_KEY, data.token);
           localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
-        } catch { }
+        } catch {}
         await refreshSessions(data.token);
       } finally {
         setIsAuthBusy(false);
@@ -180,9 +195,10 @@ export default function Home() {
     if (sessionId === activeSessionId) return;
     setError(null);
     setActiveSessionId(sessionId);
-    const data = await fetchJson<{ session: Session }>(apiUrl(`/sessions/${sessionId}`), {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
+    const data = await fetchJson<{ session: Session }>(
+      apiUrl(`/sessions/${sessionId}`),
+      { headers: { Authorization: `Bearer ${authToken}` } }
+    );
     setMessages(data.session.messages);
     setIsSidebarOpen(false);
     queueMicrotask(scrollToBottom);
@@ -198,7 +214,10 @@ export default function Home() {
     try {
       const data = await fetchJson<{ sessionId: string }>(apiUrl("/sessions"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({}),
       });
       await refreshSessions();
@@ -224,9 +243,8 @@ export default function Home() {
       });
       const nextSessions = await refreshSessions();
       if (activeSessionId === sessionId) {
-        if (nextSessions.length > 0) {
-          await openSession(nextSessions[0].id);
-        } else {
+        if (nextSessions.length > 0) await openSession(nextSessions[0].id);
+        else {
           setActiveSessionId(null);
           setMessages([]);
           await createSession();
@@ -243,7 +261,10 @@ export default function Home() {
     if (!window.confirm("Clear all chat history? This will delete all chats.")) return;
     setError(null);
     try {
-      await fetchJson(apiUrl("/sessions"), { method: "DELETE", headers: { Authorization: `Bearer ${authToken}` } });
+      await fetchJson(apiUrl("/sessions"), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
       setMessages([]);
       setActiveSessionId(null);
       setSessions([]);
@@ -262,13 +283,11 @@ export default function Home() {
       setError("Missing NEXT_PUBLIC_BACKEND_URL.");
       return;
     }
-
     if (!isAuthed) {
       setSessions([]);
       setActiveSessionId(null);
       return;
     }
-
     refreshSessions().catch((e) => setError(e.message));
   }, [backendBase, refreshSessions, isAuthed]);
 
@@ -281,37 +300,68 @@ export default function Home() {
     }
   }, [sessions, activeSessionId, backendBase, isAuthed]);
 
+  // ── UPDATED sendMessage — uses /rag/chat when RAG is enabled ───────────────
   async function sendMessage() {
     const text = input.trim();
     if (!text || isStreaming) return;
     setError(null);
+    setRagSources([]);
     setInput("");
     setIsStreaming(true);
-    const userMsg: ChatMessage = { role: "user", content: text, createdAt: new Date().toISOString() };
+
+    const userMsg: ChatMessage = {
+      role: "user",
+      content: text,
+      createdAt: new Date().toISOString(),
+    };
     const assistantMsg: ChatMessage = { role: "assistant", content: "" };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     queueMicrotask(scrollToBottom);
+
     try {
-      const ensuredSessionId = isAuthed ? (activeSessionId || (await createSession(false))) : null;
-      const res = await fetch(apiUrl("/chat"), {
+      // Choose endpoint based on RAG mode
+      const endpoint = ragEnabled && isAuthed ? "/rag/chat" : "/chat";
+      const ensuredSessionId =
+        !ragEnabled && isAuthed
+          ? activeSessionId || (await createSession(false))
+          : null;
+
+      const body: Record<string, unknown> = { message: text };
+      if (ensuredSessionId) body.sessionId = ensuredSessionId;
+      if (ragEnabled) {
+        body.useRag = true;
+        if (ragSelectedFileIds.length > 0) body.fileIds = ragSelectedFileIds;
+      }
+
+      const res = await fetch(apiUrl(endpoint), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(isAuthed && authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          ...(isAuthed && authToken
+            ? { Authorization: `Bearer ${authToken}` }
+            : {}),
         },
-        body: JSON.stringify({
-          ...(ensuredSessionId ? { sessionId: ensuredSessionId } : {}),
-          message: text,
-        }),
+        body: JSON.stringify(body),
       });
+
       if (!res.ok || !res.body) {
         const t = await res.text().catch(() => "");
         throw new Error(t || `Chat failed: ${res.status}`);
       }
+
+      // Grab RAG sources header if present
+      const sourcesHeader = res.headers.get("x-rag-sources");
+      if (sourcesHeader) {
+        try {
+          setRagSources(JSON.parse(sourcesHeader));
+        } catch {}
+      }
+
       const sessionIdHeader = res.headers.get("x-session-id");
       if (sessionIdHeader && sessionIdHeader !== activeSessionId) {
         setActiveSessionId(sessionIdHeader);
       }
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = "";
@@ -329,7 +379,8 @@ export default function Home() {
         });
         scrollToBottom();
       }
-      if (isAuthed) await refreshSessions();
+
+      if (isAuthed && !ragEnabled) await refreshSessions();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setMessages((prev) => prev.slice(0, -1));
@@ -360,16 +411,11 @@ export default function Home() {
           "flex h-full flex-col overflow-hidden",
         ].join(" ")}
       >
-        {/* --- Header Section Fix --- */}
         <div className="flex shrink-0 items-center justify-between gap-2 px-4 h-14 border-b border-zinc-200 dark:border-white/10">
-
-          {/* "Chats" text ko baseline center karne ke liye mt-0.5 add kiya hai */}
           <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mt-0.5">
             Chats
           </div>
-
           <div className="flex items-center gap-1.5">
-            {/* 'New' Button - Fixed height 'h-8' and flex items-center */}
             <button
               className="flex items-center justify-center rounded-md bg-zinc-900/5 px-3 h-8 text-sm font-medium hover:bg-zinc-900/10 dark:bg-white/10 dark:hover:bg-white/15 transition-colors"
               onClick={() => createSession()}
@@ -377,8 +423,6 @@ export default function Home() {
             >
               New
             </button>
-
-            {/* 'Clear' Button */}
             <button
               className="flex items-center justify-center rounded-md px-3 h-8 text-sm font-medium bg-red-500/10 text-red-700 hover:bg-red-500/15 dark:text-red-300 transition-colors"
               onClick={() => clearHistory()}
@@ -386,15 +430,12 @@ export default function Home() {
             >
               Clear
             </button>
-
-            {/* Sidebar Toggle Icons - Icon buttons ko center karne ke liye p-1.5 */}
             <button
               className="lg:hidden p-1.5 hover:bg-zinc-100 dark:hover:bg-white/10 rounded-md flex items-center justify-center text-zinc-500 transition-colors"
               onClick={() => setIsSidebarOpen(false)}
             >
               <PanelLeftClose size={18} />
             </button>
-
             <button
               type="button"
               className="hidden lg:flex p-1.5 hover:bg-zinc-100 dark:hover:bg-white/10 rounded-md items-center justify-center text-zinc-500 transition-colors"
@@ -405,7 +446,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* <div className="px-4 pb-3 border-b border-zinc-200 dark:border-white/10"> */}
         {isAuthed && authUser ? (
           <div className="pt-3 pl-3 flex items-center gap-3">
             {authUser.picture ? (
@@ -419,14 +459,15 @@ export default function Home() {
               <div className="h-10 w-10 rounded-full border border-zinc-200 dark:border-white/10 bg-zinc-100 dark:bg-white/10" />
             )}
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate">{authUser.name || "User"}</div>
+              <div className="text-sm font-semibold truncate">
+                {authUser.name || "User"}
+              </div>
               <div className="text-xs text-zinc-500 truncate">{authUser.email}</div>
             </div>
           </div>
         ) : null}
-        {/* </div> */}
         {authUser && (
-          <div className="px-4 pb-3 border-b border-zinc-200 dark:border-white/10"></div>
+          <div className="px-4 pb-3 border-b border-zinc-200 dark:border-white/10" />
         )}
 
         <div className="flex-1 overflow-y-auto px-2 pb-2">
@@ -446,17 +487,22 @@ export default function Home() {
                     <button
                       className={[
                         "flex-1 rounded-md px-3 py-2 text-left text-sm truncate transition-colors",
-                        s.id === activeSessionId ? "bg-zinc-900/10 dark:bg-white/10" : "hover:bg-zinc-900/5 dark:hover:bg-white/5",
+                        s.id === activeSessionId
+                          ? "bg-zinc-900/10 dark:bg-white/10"
+                          : "hover:bg-zinc-900/5 dark:hover:bg-white/5",
                       ].join(" ")}
                       onClick={() => openSession(s.id)}
                       disabled={isStreaming}
                     >
-                      <div className="truncate font-medium">{s.title || "New chat"}</div>
+                      <div className="truncate font-medium">
+                        {s.title || "New chat"}
+                      </div>
                       <div className="truncate text-xs text-zinc-500">
                         {new Date(s.updatedAt).toLocaleString()}
                       </div>
                     </button>
-                    {(s.messageCount && s.messageCount > 0) || (s.title && s.title !== "New chat") ? (
+                    {(s.messageCount && s.messageCount > 0) ||
+                    (s.title && s.title !== "New chat") ? (
                       <button
                         className="shrink-0 p-2 text-zinc-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={(e) => {
@@ -531,7 +577,7 @@ export default function Home() {
             <button
               className={[
                 "p-2 hover:bg-zinc-100 dark:hover:bg-white/10 rounded-md",
-                isSidebarDesktopOpen ? "lg:hidden" : "block"
+                isSidebarDesktopOpen ? "lg:hidden" : "block",
               ].join(" ")}
               onClick={() => {
                 setIsSidebarOpen(true);
@@ -552,7 +598,8 @@ export default function Home() {
                   </span>
                 </div>
                 <div className="text-[10px] text-zinc-400 font-medium">
-                  Developed by <span className="text-indigo-400">Prince Yaduvanshi</span>
+                  Developed by{" "}
+                  <span className="text-indigo-400">Prince Yaduvanshi</span>
                 </div>
               </div>
             </div>
@@ -593,27 +640,49 @@ export default function Home() {
                       : "mr-auto w-full border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800",
                   ].join(" ")}
                 >
-                  {/* Assistant Thinking / Loading State */}
                   {m.role === "assistant" && m.content === "" && isStreaming ? (
                     <div className="flex items-center gap-3 text-zinc-500 dark:text-zinc-400 py-2">
                       <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
                       <span className="font-medium animate-pulse">Thinking...</span>
                     </div>
                   ) : (
-                    <div className={`prose dark:prose-invert max-w-none 
-                        ${m.role === 'user' ? 'prose-p:text-white' : ''}
+                    <div
+                      className={`prose dark:prose-invert max-w-none 
+                        ${m.role === "user" ? "prose-p:text-white" : ""}
                         prose-p:mb-4 prose-p:leading-7 
-                        prose-headings:font-bold prose-headings:text-zinc-900 dark:prose-headings:text-white`}>
-
+                        prose-headings:font-bold prose-headings:text-zinc-900 dark:prose-headings:text-white`}
+                    >
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
-                          h3: ({ children }) => <h3 className="text-xl font-bold mt-6 mb-3">{children}</h3>,
-                          ol: ({ children }) => <ol className="list-decimal pl-6 space-y-4 my-4 font-bold text-zinc-900 dark:text-zinc-50">{children}</ol>,
-                          ul: ({ children }) => <ul className="list-disc pl-6 space-y-2 my-4 font-normal text-zinc-700 dark:text-zinc-300">{children}</ul>,
-                          p: ({ children }) => <p className="mb-4 leading-relaxed tracking-wide last:mb-0">{children}</p>,
-                          li: ({ children }) => <li className="pl-1 font-normal text-zinc-800 dark:text-zinc-200">{children}</li>,
-                          strong: ({ children }) => <strong className="font-bold text-zinc-950 dark:text-white">{children}</strong>
+                          h3: ({ children }) => (
+                            <h3 className="text-xl font-bold mt-6 mb-3">{children}</h3>
+                          ),
+                          ol: ({ children }) => (
+                            <ol className="list-decimal pl-6 space-y-4 my-4 font-bold text-zinc-900 dark:text-zinc-50">
+                              {children}
+                            </ol>
+                          ),
+                          ul: ({ children }) => (
+                            <ul className="list-disc pl-6 space-y-2 my-4 font-normal text-zinc-700 dark:text-zinc-300">
+                              {children}
+                            </ul>
+                          ),
+                          p: ({ children }) => (
+                            <p className="mb-4 leading-relaxed tracking-wide last:mb-0">
+                              {children}
+                            </p>
+                          ),
+                          li: ({ children }) => (
+                            <li className="pl-1 font-normal text-zinc-800 dark:text-zinc-200">
+                              {children}
+                            </li>
+                          ),
+                          strong: ({ children }) => (
+                            <strong className="font-bold text-zinc-950 dark:text-white">
+                              {children}
+                            </strong>
+                          ),
                         }}
                       >
                         {m.content}
@@ -622,40 +691,84 @@ export default function Home() {
                   )}
                 </div>
               ))}
+
+              {/* ── NEW: RAG sources badge ─────────────────────────────── */}
+              {ragSources.length > 0 && !isStreaming && (
+                <div className="flex flex-wrap gap-1.5 mx-1">
+                  <span className="text-[10px] text-zinc-400 self-center">
+                    Sources:
+                  </span>
+                  {ragSources.map((src, i) => (
+                    <span
+                      key={i}
+                      className="text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full"
+                    >
+                      {src}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
 
         {/* FOOTER */}
-        <footer className="shrink-0 p-4 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md border-t border-zinc-200 dark:border-white/10">
-          <div className="mx-auto max-w-3xl relative flex items-end gap-2">
-            <textarea
-              className="flex-1 resize-none rounded-2xl border border-zinc-300 bg-white p-4 pr-12 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-900 dark:border-zinc-800 transition-all shadow-inner min-h-[56px] max-h-48"
-              placeholder="Ask anything..."
-              rows={1}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${e.target.scrollHeight}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
+        <footer className="shrink-0 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md border-t border-zinc-200 dark:border-white/10">
+          {/* ── NEW: RAG Panel (only when logged in) ─────────────────────── */}
+          {isAuthed && authToken && (
+            <RagPanel
+              authToken={authToken}
+              backendBase={backendBase}
+              onSelectionChange={setRagSelectedFileIds}
+              ragEnabled={ragEnabled}
+              onToggleRag={setRagEnabled}
             />
-            <button
-              className="absolute right-2 bottom-2 bg-indigo-600 text-white p-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 transition-all shadow-md"
-              onClick={() => sendMessage()}
-              disabled={!input.trim() || isStreaming}
-            >
-              {isStreaming ? <Loader2 size={20} className="animate-spin" /> : <ArrowUp size={20} />}
-            </button>
+          )}
+
+          <div className="p-4">
+            <div className="mx-auto max-w-3xl relative flex items-end gap-2">
+              <textarea
+                className="flex-1 resize-none rounded-2xl border border-zinc-300 bg-white p-4 pr-12 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-zinc-900 dark:border-zinc-800 transition-all shadow-inner min-h-[56px] max-h-48"
+                placeholder={
+                  ragEnabled
+                    ? "Ask a question about your documents…"
+                    : "Ask anything…"
+                }
+                rows={1}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+              />
+              <button
+                className="absolute right-2 bottom-2 bg-indigo-600 text-white p-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 transition-all shadow-md"
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || isStreaming}
+              >
+                {isStreaming ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <ArrowUp size={20} />
+                )}
+              </button>
+            </div>
+            {error && (
+              <p className="text-red-500 text-xs mt-3 text-center font-medium animate-bounce">
+                {error}
+              </p>
+            )}
+            <p className="text-[10px] text-zinc-400 text-center mt-3">
+              AI can make mistakes. Verify important info.
+            </p>
           </div>
-          {error && <p className="text-red-500 text-xs mt-3 text-center font-medium animate-bounce">{error}</p>}
-          <p className="text-[10px] text-zinc-400 text-center mt-3">AI can make mistakes. Verify important info.</p>
         </footer>
       </main>
     </div>

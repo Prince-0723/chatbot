@@ -12,6 +12,9 @@ import { Chat } from "./models/Chat.js";
 import { User } from "./models/User.js";
 import { assertEnv, authenticate, maybeAuthenticate, signJwt } from "./auth.js";
 
+// ── NEW: RAG router ────────────────────────────────────────────────────────
+import ragRouter from "./rag.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env"), override: true });
 
@@ -73,7 +76,7 @@ async function startServer() {
       origin: origin === "*" ? "*" : origin,
       methods: ["GET", "POST", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
-      exposedHeaders: ["x-session-id"],
+      exposedHeaders: ["x-session-id", "x-rag-sources"],  // expose rag sources header
       maxAge: 86400,
     })
   );
@@ -81,6 +84,9 @@ async function startServer() {
   app.get("/health", (_req, res) => {
     res.json({ ok: true, message: "Backend running", time: new Date().toISOString() });
   });
+
+  // ── NEW: Mount RAG routes at /rag ──────────────────────────────────────
+  app.use("/rag", ragRouter);
 
   app.post("/auth/google", async (req, res) => {
     const credential = (req.body?.credential ?? "").trim();
@@ -281,4 +287,3 @@ startServer().catch((err) => {
   console.error(err?.message ?? err);
   process.exitCode = 1;
 });
-
