@@ -21,6 +21,7 @@ import Groq from "groq-sdk";
 
 import { authenticate } from "./auth.js";
 import { RagFile } from "./models/RagFile.js";
+import { Chat } from "./models/Chat.js";
 
 // ─────────────────────────────────────────────────────────────
 // Lazy Clients
@@ -639,179 +640,133 @@ router.delete(
 );
 
 /**
- * Chat
+ * Chat — with MongoDB history persistence
  */
 router.post(
   "/chat",
   authenticate,
 
   async (req, res) => {
-    const userId =
-      req.user.sub;
+    const userId = req.user.sub;
 
-    const message = (
-      req.body?.message ?? ""
-    ).trim();
-
-    const fileIds = Array.isArray(
-      req.body?.fileIds
-    )
-      ? req.body.fileIds
-      : [];
-
-    const useRag =
-      req.body?.useRag !== false;
+    const message = (req.body?.message ?? "").trim();
+    const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds : [];
+    const useRag = req.body?.useRag !== false;
+    const requestedSessionId = (req.body?.sessionId ?? "").trim();
 
     if (!message) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Missing message",
-        });
+      return res.status(400).json({ error: "Missing message" });
     }
 
     let contextText = "";
     let sourcesUsed = [];
 
-    // Retrieve context
+    // ── Retrieve RAG context ────────────────────────────────────────────────
     if (useRag) {
       try {
-        const matches =
-          await queryPinecone(
-            userId,
-            message,
-            fileIds,
-            8
-          );
+        const matches = await queryPinecone(userId, message, fileIds, 8);
 
-        if (
-          matches.length > 0
-        ) {
+        if (matches.length > 0) {
           sourcesUsed = [
             ...new Set(
-              matches
-                .map(
-                  (m) =>
-                    m.metadata
-                      ?.filename
-                )
-                .filter(Boolean)
+              matches.map((m) => m.metadata?.filename).filter(Boolean)
             ),
           ];
 
-          contextText =
-            matches
-              .map(
-                (m, i) =>
-                  `[Source ${i + 1
-                  }: ${m.metadata
-                    ?.filename
-                  }]\n${m.metadata
-                    ?.text
-                  }`
-              )
-              .join(
-                "\n\n---\n\n"
-              );
+          contextText = matches
+            .map(
+              (m, i) =>
+                `[Source ${i + 1}: ${m.metadata?.filename}]\n${m.metadata?.text}`
+            )
+            .join("\n\n---\n\n");
         }
       } catch (err) {
-        console.warn(
-          "[RAG query warning]",
-          err.message
-        );
+        console.warn("[RAG query warning]", err.message);
       }
     }
 
-    // System Prompt
-    const systemPrompt =
-      contextText
-        ? `
-You are a helpful conversational AI assistant.
+    // ── Build system prompt ─────────────────────────────────────────────────
+    const ragSystemPrompt = contextText
+      ? `You are a helpful conversational AI assistant.\n\nThe user has uploaded documents. Use the provided document context naturally while answering. If the answer is unavailable in documents, answer using general knowledge.\n\n=== DOCUMENT CONTEXT ===\n\n${contextText}\n\n=== END CONTEXT ===`
+      : `You are a helpful conversational AI assistant.`;
 
-The user has uploaded documents.
+    // ── Load or create MongoDB chat session ─────────────────────────────────
+    let chatDoc = null;
+    try {
+      if (requestedSessionId) {
+        chatDoc = await Chat.findOne({ _id: requestedSessionId, userId });
+      }
 
-Use the provided document context naturally while answering.
+      if (!chatDoc) {
+        chatDoc = await Chat.create({
+          userId,
+          model: GROQ_MODEL,
+          systemPrompt: ragSystemPrompt,
+          messages: [{ role: "system", content: ragSystemPrompt, createdAt: new Date() }],
+          title: "",
+        });
+      } else {
+        // Update system prompt with fresh RAG context
+        chatDoc.messages[0] = { role: "system", content: ragSystemPrompt, createdAt: chatDoc.messages[0]?.createdAt ?? new Date() };
+      }
 
-If the answer is unavailable in documents,
-then answer using general knowledge.
-
-=== DOCUMENT CONTEXT ===
-
-${contextText}
-
-=== END CONTEXT ===
-`
-        : `
-You are a helpful conversational AI assistant.
-`;
-
-    // Headers
-    res.status(200);
-
-    res.setHeader(
-      "Content-Type",
-      "text/plain; charset=utf-8"
-    );
-
-    res.setHeader(
-      "Cache-Control",
-      "no-store"
-    );
-
-    if (
-      sourcesUsed.length > 0
-    ) {
-      res.setHeader(
-        "x-rag-sources",
-        JSON.stringify(
-          sourcesUsed
-        )
-      );
+      // Push user message
+      chatDoc.messages.push({ role: "user", content: message, createdAt: new Date() });
+      await chatDoc.save();
+    } catch (dbErr) {
+      console.error("[RAG chat db error]", dbErr.message);
+      // Non-fatal: continue without history
     }
 
-    // Stream response
+    // ── Build messages array for Groq (full history) ─────────────────────────
+    const groqMessages = chatDoc
+      ? chatDoc.messages.map((m) => ({ role: m.role, content: m.content }))
+      : [
+          { role: "system", content: ragSystemPrompt },
+          { role: "user", content: message },
+        ];
+
+    // ── Response headers ────────────────────────────────────────────────────
+    res.status(200);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    if (chatDoc) res.setHeader("x-session-id", chatDoc._id.toString());
+    if (sourcesUsed.length > 0) {
+      res.setHeader("x-rag-sources", JSON.stringify(sourcesUsed));
+    }
+
+    // ── Stream response ─────────────────────────────────────────────────────
+    let assistantText = "";
     try {
-      const stream =
-        await getGroq().chat.completions.create(
-          {
-            model:
-              GROQ_MODEL,
-
-            messages: [
-              {
-                role: "system",
-                content:
-                  systemPrompt,
-              },
-
-              {
-                role: "user",
-                content:
-                  message,
-              },
-            ],
-
-            stream: true,
-          }
-        );
+      const stream = await getGroq().chat.completions.create({
+        model: GROQ_MODEL,
+        messages: groqMessages,
+        stream: true,
+      });
 
       for await (const chunk of stream) {
-        const delta =
-          chunk?.choices?.[0]
-            ?.delta
-            ?.content ?? "";
-
+        const delta = chunk?.choices?.[0]?.delta?.content ?? "";
         if (delta) {
+          assistantText += delta;
           res.write(delta);
         }
       }
+
+      // Save assistant reply + session title to MongoDB
+      if (chatDoc) {
+        chatDoc.messages.push({
+          role: "assistant",
+          content: assistantText,
+          createdAt: new Date(),
+        });
+        if (!chatDoc.title) {
+          const trimmed = message.trim();
+          chatDoc.title = trimmed.length > 60 ? trimmed.slice(0, 57).trimEnd() + "..." : trimmed;
+        }
+        await chatDoc.save();
+      }
     } catch (err) {
-      res.write(
-        `\n\n[Error] ${err?.message ??
-        String(err)
-        }\n`
-      );
+      res.write(`\n\n[Error] ${err?.message ?? String(err)}\n`);
     } finally {
       res.end();
     }

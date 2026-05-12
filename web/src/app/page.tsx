@@ -86,12 +86,31 @@ function isImage(mimetype: string) {
   return mimetype.startsWith("image/");
 }
 
+// ── Strip markdown for plain-text copy ───────────────────────────────────────
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")          // headings
+    .replace(/\*\*(.+?)\*\*/g, "$1")       // bold
+    .replace(/\*(.+?)\*/g, "$1")           // italic
+    .replace(/`{3}[\s\S]*?`{3}/g, (m) =>  // code blocks — keep content
+      m.replace(/```[\w]*\n?/g, "").replace(/```/g, "")
+    )
+    .replace(/`(.+?)`/g, "$1")             // inline code
+    .replace(/^\s*[-*+]\s+/gm, "• ")       // unordered list
+    .replace(/^\s*\d+\.\s+/gm, (m) => m)  // ordered list — keep numbers
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")   // links
+    .replace(/!\[.*?\]\(.+?\)/g, "")       // images
+    .replace(/^>\s+/gm, "")               // blockquotes
+    .replace(/\n{3,}/g, "\n\n")           // excess blank lines
+    .trim();
+}
+
 // ── Copy Button ───────────────────────────────────────────────────────────────
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(stripMarkdown(text));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
@@ -601,6 +620,8 @@ export default function Home() {
       const ensuredSessionId =
         !hasFileContext && isAuthed
           ? activeSessionId || (await createSession(false))
+          : hasFileContext && isAuthed
+          ? activeSessionId || null
           : null;
 
       const body: Record<string, unknown> = {
@@ -655,7 +676,7 @@ export default function Home() {
         scrollToBottom();
       }
 
-      if (isAuthed && !hasFileContext) await refreshSessions();
+      if (isAuthed) await refreshSessions();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setMessages((prev) => prev.slice(0, -1));
@@ -938,12 +959,28 @@ export default function Home() {
                             <span className="text-xs text-zinc-400">Thinking…</span>
                           </div>
                         ) : (
-                          <div className={`prose dark:prose-invert max-w-none text-sm leading-relaxed
-                            ${m.role === "user" ? "prose-p:text-white prose-headings:text-white prose-strong:text-white prose-li:text-white" : ""}
-                            prose-p:mb-3 prose-p:last:mb-0 prose-headings:font-semibold prose-headings:mb-2
-                            prose-code:text-xs prose-pre:rounded-xl prose-pre:bg-zinc-50 dark:prose-pre:bg-zinc-900/60
-                            prose-pre:border prose-pre:border-zinc-200 dark:prose-pre:border-zinc-700/50
-                          `}>
+                          <div className={[
+                            "prose max-w-none text-sm leading-7",
+                            m.role === "user"
+                              ? "prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-li:text-white prose-code:text-white/90"
+                              : [
+                                  "dark:prose-invert",
+                                  "prose-headings:font-bold prose-headings:text-zinc-800 dark:prose-headings:text-zinc-100",
+                                  "prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+                                  "prose-headings:mt-5 prose-headings:mb-2 prose-headings:border-b prose-headings:border-zinc-100 dark:prose-headings:border-zinc-700/50 prose-headings:pb-1",
+                                  "prose-p:text-zinc-700 dark:prose-p:text-zinc-300 prose-p:mb-3 prose-p:last:mb-0",
+                                  "prose-strong:text-zinc-900 dark:prose-strong:text-zinc-100 prose-strong:font-semibold",
+                                  "prose-em:text-zinc-600 dark:prose-em:text-zinc-400",
+                                  "prose-ul:my-2 prose-li:my-0.5 prose-li:text-zinc-700 dark:prose-li:text-zinc-300",
+                                  "prose-ol:my-2",
+                                  "prose-code:text-indigo-600 dark:prose-code:text-indigo-300 prose-code:bg-indigo-50 dark:prose-code:bg-indigo-900/30 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-code:font-medium prose-code:before:content-none prose-code:after:content-none",
+                                  "prose-pre:rounded-xl prose-pre:bg-zinc-900 dark:prose-pre:bg-black/40 prose-pre:border prose-pre:border-zinc-200 dark:prose-pre:border-zinc-700/50 prose-pre:shadow-sm prose-pre:overflow-x-auto",
+                                  "prose-pre:my-3 prose-pre:text-zinc-100",
+                                  "prose-blockquote:border-l-4 prose-blockquote:border-indigo-300 dark:prose-blockquote:border-indigo-600 prose-blockquote:bg-indigo-50/50 dark:prose-blockquote:bg-indigo-900/10 prose-blockquote:rounded-r-lg prose-blockquote:px-4 prose-blockquote:py-1 prose-blockquote:my-3 prose-blockquote:text-zinc-600 dark:prose-blockquote:text-zinc-400 prose-blockquote:not-italic",
+                                  "prose-hr:border-zinc-200 dark:prose-hr:border-zinc-700",
+                                  "prose-table:text-sm prose-th:bg-zinc-50 dark:prose-th:bg-zinc-800 prose-th:font-semibold",
+                                ].join(" "),
+                          ].join(" ")}>
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
                               {m.content}
                             </ReactMarkdown>
