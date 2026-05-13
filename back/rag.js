@@ -51,24 +51,28 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
     const isImg = mimetype.startsWith("image/");
     const resourceType = (isImg || isPdf) ? "image" : "raw";
 
-    // Separate subfolders by type: chatbot/images/, chatbot/documents/, chatbot/pdfs/
+    // All files go under chatbot-docs/ with type subfolders
     const subfolder = isImg ? "images" : isPdf ? "pdfs" : "documents";
-    const publicId = `chatbot/${subfolder}/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
 
     const stream = cloudinary.uploader.upload_stream(
       {
         resource_type: resourceType,
-        public_id: publicId,
+
+        folder: `chatbot-docs/${subfolder}`,
+
+        public_id: `${Date.now()}-${safeFilename}`,
+
         overwrite: false,
         invalidate: false,
-        // For PDFs — generate a preview page
-        ...(isPdf && { format: "jpg", pages: true }),
       },
       (error, result) => {
         if (error) return reject(error);
         resolve({ url: result.secure_url, publicId: result.public_id });
       }
     );
+
+
 
     stream.end(buffer);
   });
@@ -366,6 +370,48 @@ router.get("/files", authenticate, async (req, res) => {
 });
 
 /**
+ * DELETE /rag/files
+ * Bulk-delete ALL RAG files for the authenticated user.
+ * Removes vectors from Pinecone, assets from Cloudinary, and records from MongoDB.
+ * Called by the frontend's "Clear all history" action.
+ */
+router.delete("/files", authenticate, async (req, res) => {
+  const userId = req.user.sub;
+  try {
+    const files = await RagFile.find({ userId }).lean();
+
+    // Delete all vectors for this user from their namespace
+    const index = getPinecone().index(PINECONE_INDEX);
+    const namespace = `user-${userId}`;
+    try {
+      // deleteAll removes every vector in the namespace — fastest option
+      await index.namespace(namespace).deleteAll();
+    } catch (pineconeErr) {
+      console.warn("[Pinecone bulk delete warning]", pineconeErr?.message);
+    }
+
+    // Remove all Cloudinary assets (best-effort, parallel)
+    const cloudinaryDeletes = files
+      .filter((f) => f.cloudinaryPublicId)
+      .map((f) => {
+        const isPdf = f.mimetype === "application/pdf";
+        const resourceType = (f.mimetype.startsWith("image/") || isPdf) ? "image" : "raw";
+        return cloudinary.uploader
+          .destroy(f.cloudinaryPublicId, { resource_type: resourceType })
+          .catch((e) => console.warn("[Cloudinary bulk delete]", e.message));
+      });
+    await Promise.allSettled(cloudinaryDeletes);
+
+    // Remove all MongoDB records
+    const result = await RagFile.deleteMany({ userId });
+    return res.json({ ok: true, deletedCount: result.deletedCount ?? 0 });
+  } catch (err) {
+    console.error("[RAG bulk delete error]", err);
+    return res.status(500).json({ error: err?.message || "Bulk delete failed" });
+  }
+});
+
+/**
  * DELETE /rag/files/:id
  * Deletes from Pinecone, optionally from Cloudinary, and from MongoDB.
  */
@@ -410,48 +456,6 @@ router.delete("/files/:id", authenticate, async (req, res) => {
   } catch (err) {
     console.error("[RAG delete error]", err);
     return res.status(500).json({ error: err?.message || "Delete failed" });
-  }
-});
-
-/**
- * DELETE /rag/files
- * Bulk-delete ALL RAG files for the authenticated user.
- * Removes vectors from Pinecone, assets from Cloudinary, and records from MongoDB.
- * Called by the frontend's "Clear all history" action.
- */
-router.delete("/files", authenticate, async (req, res) => {
-  const userId = req.user.sub;
-  try {
-    const files = await RagFile.find({ userId }).lean();
-
-    // Delete all vectors for this user from their namespace
-    const index = getPinecone().index(PINECONE_INDEX);
-    const namespace = `user-${userId}`;
-    try {
-      // deleteAll removes every vector in the namespace — fastest option
-      await index.namespace(namespace).deleteAll();
-    } catch (pineconeErr) {
-      console.warn("[Pinecone bulk delete warning]", pineconeErr?.message);
-    }
-
-    // Remove all Cloudinary assets (best-effort, parallel)
-    const cloudinaryDeletes = files
-      .filter((f) => f.cloudinaryPublicId)
-      .map((f) => {
-        const isPdf = f.mimetype === "application/pdf";
-        const resourceType = (f.mimetype.startsWith("image/") || isPdf) ? "image" : "raw";
-        return cloudinary.uploader
-          .destroy(f.cloudinaryPublicId, { resource_type: resourceType })
-          .catch((e) => console.warn("[Cloudinary bulk delete]", e.message));
-      });
-    await Promise.allSettled(cloudinaryDeletes);
-
-    // Remove all MongoDB records
-    const result = await RagFile.deleteMany({ userId });
-    return res.json({ ok: true, deletedCount: result.deletedCount ?? 0 });
-  } catch (err) {
-    console.error("[RAG bulk delete error]", err);
-    return res.status(500).json({ error: err?.message || "Bulk delete failed" });
   }
 });
 

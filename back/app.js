@@ -169,6 +169,23 @@ async function startServer() {
     res.json({ ok: true, deletedCount: result.deletedCount ?? 0 });
   });
 
+  // ── Delete account ──────────────────────────────────────────────────────────
+  // Deletes: all Chat sessions + User record from MongoDB.
+  // RAG files (Pinecone + Cloudinary + RagFile) are handled by DELETE /rag/files
+  // which the frontend calls before this endpoint.
+  app.delete("/account", authenticate, async (req, res) => {
+    const userId = req.user?.sub;
+    if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+    try {
+      await Chat.deleteMany({ userId });
+      await User.deleteOne({ _id: userId });
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[Delete account error]", err);
+      res.status(500).json({ error: err?.message || "Failed to delete account" });
+    }
+  });
+
   // ── Main chat endpoint ───────────────────────────────────────────────────
   app.post("/chat", maybeAuthenticate, async (req, res) => {
     const message = (req.body?.message ?? "").trim();

@@ -16,6 +16,7 @@ import {
   Plus,
   MessageSquare,
   ExternalLink,
+  MoreVertical,
 } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
 import ReactMarkdown from "react-markdown";
@@ -141,6 +142,46 @@ function CopyButton({ text }: { text: string }) {
 
 // ── RAG Source Badge — clickable, opens original document ────────────────────
 // FIX 3: Sources are now clickable with pointer cursor and open the original doc
+// ── Profile three-dot menu ────────────────────────────────────────────────────
+function ProfileMenu({ onDeleteAccount }: { onDeleteAccount: () => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0" ref={menuRef}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+        title="More options"
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg shadow-black/10 py-1 animate-in fade-in slide-in-from-top-2 duration-150">
+          <button
+            onClick={() => { setOpen(false); onDeleteAccount(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors rounded-lg mx-auto"
+          >
+            <Trash2 size={14} />
+            Delete account
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RagSourceBadge({
   src,
   ragFiles,
@@ -633,6 +674,46 @@ export default function Home() {
     }
   }
 
+  // ── Delete account ────────────────────────────────────────────────────────
+  async function deleteAccount() {
+    if (!isAuthed || isStreaming) return;
+    if (!window.confirm(
+      "Are you sure you want to delete your account?\n\n" +
+      "This will permanently delete:\n" +
+      "• All your chat history\n" +
+      "• All uploaded files (Cloudinary + Pinecone)\n" +
+      "• Your account from our database\n\n" +
+      "This action cannot be undone."
+    )) return;
+    setError(null);
+    try {
+      // 1. Delete all RAG files (Pinecone + Cloudinary + MongoDB RagFile records)
+      try {
+        await fetch(apiUrl("/rag/files"), {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+      } catch {}
+      // 2. Delete account (Chat sessions + User record from MongoDB)
+      await fetchJson(apiUrl("/account"), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      // 3. Log out locally
+      setAuthToken(null);
+      setAuthUser(null);
+      setMessages([]);
+      setActiveSessionId(null);
+      setSessions([]);
+      setRagFiles([]);
+      sessionFileIds.current = [];
+      localStorage.removeItem(STORAGE_TOKEN_KEY);
+      localStorage.removeItem(STORAGE_USER_KEY);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   useEffect(() => {
     if (!backendBase) { setError("Missing NEXT_PUBLIC_BACKEND_URL."); return; }
     if (!isAuthed) { setSessions([]); setActiveSessionId(null); return; }
@@ -907,24 +988,26 @@ export default function Home() {
         </div>
 
         {isAuthed && authUser && (
-          <div className="px-4 pt-3 pb-3 flex items-center gap-3 border-b border-zinc-100 dark:border-white/[0.08]">
+          <div className="px-4 pt-3 pb-3 flex items-center gap-3 border-b border-zinc-100 dark:border-white/[0.08] relative">
             {authUser.picture ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={authUser.picture}
                 alt={authUser.name}
-                className="h-9 w-9 rounded-full border border-zinc-200 dark:border-white/15 object-cover"
+                className="h-9 w-9 rounded-full border border-zinc-200 dark:border-white/15 object-cover shrink-0"
                 referrerPolicy="no-referrer"
               />
             ) : (
-              <div className="h-9 w-9 rounded-full bg-zinc-200 dark:bg-white/10 flex items-center justify-center text-sm font-bold text-zinc-600 dark:text-zinc-300">
+              <div className="h-9 w-9 rounded-full bg-zinc-200 dark:bg-white/10 flex items-center justify-center text-sm font-bold text-zinc-600 dark:text-zinc-300 shrink-0">
                 {(authUser.name || authUser.email)[0]?.toUpperCase()}
               </div>
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold truncate">{authUser.name || "User"}</div>
               <div className="text-[11px] text-zinc-400 truncate">{authUser.email}</div>
             </div>
+            {/* Three-dot menu */}
+            <ProfileMenu onDeleteAccount={deleteAccount} />
           </div>
         )}
 
@@ -962,12 +1045,14 @@ export default function Home() {
                         </span>
                       </div>
                     </button>
-                    <button
-                      className="shrink-0 p-1.5 text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
-                      onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {s.title && s.title.trim() !== "" && (
+                      <button
+                        className="shrink-0 p-1.5 text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
+                        onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}
@@ -976,7 +1061,7 @@ export default function Home() {
         </div>
 
         <div className="shrink-0 border-t border-zinc-100 dark:border-white/[0.08] p-4 space-y-2">
-          {sessions.length > 0 && isAuthed && (
+          {isAuthed && sessions.some((s) => s.title && s.title.trim() !== "") && (
             <button
               className="w-full rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
               onClick={clearHistory}
