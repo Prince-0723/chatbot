@@ -11,8 +11,6 @@ import { connectMongo } from "./db.js";
 import { Chat } from "./models/Chat.js";
 import { User } from "./models/User.js";
 import { assertEnv, authenticate, maybeAuthenticate, signJwt } from "./auth.js";
-
-// ── NEW: RAG router ────────────────────────────────────────────────────────
 import ragRouter from "./rag.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,23 +20,20 @@ const groq = new Groq({ apiKey: assertEnv("GROQ_API_KEY") });
 const googleClient = new OAuth2Client(assertEnv("GOOGLE_CLIENT_ID"));
 
 const DEFAULT_MODEL = "llama-3.1-8b-instant";
-const DEFAULT_SYSTEM = `
-You are an empathetic and professional AI assistant, like ChatGPT. 
-Your goal is to understand the user's emotions and provide structured, beautiful responses.
 
-FORMATTING RULES:
-1. EMOJIS: Use relevant emojis at the start of headings and to express empathy.
-2. STRUCTURE: Use '###' for clear, bold headings. 
-3. BOLDING: Use **Bold** for key concepts and importance.
-4. SPACING: Always add a blank line between sections.
-5. LISTS: Use numbered lists (1, 2, 3) for steps and bullet points (•) for ideas.
-6. TONE: Be warm, supportive, and understanding. 
+// ── Improved system prompt: natural, warm, not robotic ──────────────────────
+const DEFAULT_SYSTEM = `You are a knowledgeable, friendly AI assistant. Think of yourself as a thoughtful expert colleague — someone who gives clear, useful answers without being stiff or preachy.
 
-Example:
-### 🌿 Finding Your Inner Peace
-Managing stress is a journey, and I'm here to support you. **You're not alone.**
-1. **Breathe Deeply**: Inhale for 4 seconds...
-`.trim();
+How to communicate:
+- Be natural and conversational. Write like a real person, not a manual.
+- Match the user's energy: casual chat gets a lighter tone; technical or serious topics get focused, precise answers.
+- Be concise. Don't pad responses. If something can be said in two sentences, say it in two sentences.
+- When you use structure (headers, bullets, code blocks), use it because it genuinely helps — not by default.
+- Show personality through word choice and clarity, not through filler phrases like "Great question!" or "Certainly!".
+- If you're uncertain, say so briefly and helpfully rather than hedging every sentence.
+- When it's appropriate, think through a problem step by step — but skip the theatrics.
+
+Your goal: give the user exactly what they need, in a way that feels human and respectful of their time.`.trim();
 
 function toSession(doc) {
   return {
@@ -52,6 +47,18 @@ function toSession(doc) {
       role: m.role,
       content: m.content,
       createdAt: m.createdAt?.toISOString?.() ?? undefined,
+      // ── Persist attachment metadata (including cloudinaryUrl) ──────────────
+      attachments: m.attachments?.length > 0
+        ? m.attachments.map((a) => ({
+            fileId: a.fileId,
+            filename: a.filename,
+            mimetype: a.mimetype,
+            size: a.size,
+            cloudinaryUrl: a.cloudinaryUrl || "",
+          }))
+        : undefined,
+      // ── Persist RAG source names shown below assistant messages ────────────
+      ragSources: m.ragSources?.length > 0 ? m.ragSources : undefined,
     })),
   };
 }
@@ -76,7 +83,7 @@ async function startServer() {
       origin: origin === "*" ? "*" : origin,
       methods: ["GET", "POST", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
-      exposedHeaders: ["x-session-id", "x-rag-sources"],  // expose rag sources header
+      exposedHeaders: ["x-session-id", "x-rag-sources"],
       maxAge: 86400,
     })
   );
@@ -85,16 +92,15 @@ async function startServer() {
     res.json({ ok: true, message: "Backend running", time: new Date().toISOString() });
   });
 
-  // ── NEW: Mount RAG routes at /rag ──────────────────────────────────────
   app.use("/rag", ragRouter);
 
+  // ── Google OAuth ─────────────────────────────────────────────────────────
   app.post("/auth/google", async (req, res) => {
     const credential = (req.body?.credential ?? "").trim();
     if (!credential) {
       res.status(400).json({ error: "Missing credential" });
       return;
     }
-
     try {
       const ticket = await googleClient.verifyIdToken({
         idToken: credential,
@@ -102,39 +108,24 @@ async function startServer() {
       });
       const payload = ticket.getPayload();
       const email = payload?.email || "";
-      if (!email) {
-        res.status(400).json({ error: "Google token missing email" });
-        return;
-      }
-
-      const googleSub = payload?.sub || "";
-      const name = payload?.name || payload?.given_name || "";
-      const picture = payload?.picture || "";
+      if (!email) { res.status(400).json({ error: "Google token missing email" }); return; }
 
       const user = await User.findOneAndUpdate(
         { email },
-        { $set: { email, name, picture, googleSub } },
+        { $set: { email, name: payload?.name || "", picture: payload?.picture || "", googleSub: payload?.sub || "" } },
         { new: true, upsert: true }
       );
 
       const token = signJwt(user);
-      res.json({
-        token,
-        user: {
-          id: user._id.toString(),
-          email: user.email,
-          name: user.name,
-          picture: user.picture,
-        },
-      });
+      res.json({ token, user: { id: user._id.toString(), email: user.email, name: user.name, picture: user.picture } });
     } catch (err) {
       res.status(401).json({ error: err?.message ?? "Invalid Google token" });
     }
   });
 
+  // ── Session routes ───────────────────────────────────────────────────────
   app.get("/sessions", authenticate, async (req, res) => {
-    const userId = req.user?.sub;
-    const chats = await Chat.find({ userId }).sort({ updatedAt: -1 }).limit(200).lean();
+    const chats = await Chat.find({ userId: req.user?.sub }).sort({ updatedAt: -1 }).limit(200).lean();
     res.json({
       sessions: chats.map((c) => ({
         id: c._id.toString(),
@@ -148,7 +139,6 @@ async function startServer() {
     const userId = req.user?.sub;
     const model = req.body?.model || DEFAULT_MODEL;
     const systemPrompt = req.body?.systemPrompt || DEFAULT_SYSTEM;
-
     const now = new Date();
     const chat = await Chat.create({
       userId,
@@ -157,40 +147,29 @@ async function startServer() {
       messages: [{ role: "system", content: systemPrompt, createdAt: now }],
       title: "",
     });
-
     res.json({ sessionId: chat._id.toString() });
   });
 
   app.get("/sessions/:id", authenticate, async (req, res) => {
-    const userId = req.user?.sub;
-    const id = req.params.id;
-    const chat = await Chat.findOne({ _id: id, userId });
-    if (!chat) {
-      res.status(404).json({ error: "Not found" });
-      return;
-    }
+    const chat = await Chat.findOne({ _id: req.params.id, userId: req.user?.sub });
+    if (!chat) { res.status(404).json({ error: "Not found" }); return; }
     res.json({ session: toSession(chat) });
   });
 
   app.delete("/sessions/:id", authenticate, async (req, res) => {
-    const userId = req.user?.sub;
-    const id = req.params.id;
-    const result = await Chat.deleteOne({ _id: id, userId });
+    const result = await Chat.deleteOne({ _id: req.params.id, userId: req.user?.sub });
     res.json({ ok: true, deleted: (result.deletedCount ?? 0) > 0 });
   });
 
   app.delete("/sessions", authenticate, async (req, res) => {
-    const userId = req.user?.sub;
-    const result = await Chat.deleteMany({ userId });
+    const result = await Chat.deleteMany({ userId: req.user?.sub });
     res.json({ ok: true, deletedCount: result.deletedCount ?? 0 });
   });
 
+  // ── Main chat endpoint ───────────────────────────────────────────────────
   app.post("/chat", maybeAuthenticate, async (req, res) => {
     const message = (req.body?.message ?? "").trim();
-    if (!message) {
-      res.status(400).json({ error: "Missing message" });
-      return;
-    }
+    if (!message) { res.status(400).json({ error: "Missing message" }); return; }
 
     const authedUserId = req.user?.sub || null;
     const requestedModel = req.body?.model;
@@ -206,33 +185,24 @@ async function startServer() {
       if (requestedSessionId) {
         chatDoc = await Chat.findOne({ _id: requestedSessionId, userId: authedUserId });
       }
-
       if (!chatDoc) {
         const now = new Date();
         chatDoc = await Chat.create({
-          userId: authedUserId,
-          model,
-          systemPrompt,
+          userId: authedUserId, model, systemPrompt,
           messages: [{ role: "system", content: systemPrompt, createdAt: now }],
           title: "",
         });
       }
-
       if (requestedModel) chatDoc.model = requestedModel;
       if (requestedSystem && requestedSystem !== chatDoc.systemPrompt) {
         chatDoc.systemPrompt = requestedSystem;
-        chatDoc.messages = [
-          { role: "system", content: requestedSystem, createdAt: new Date() },
-        ];
+        chatDoc.messages = [{ role: "system", content: requestedSystem, createdAt: new Date() }];
       }
-
       chatDoc.messages.push({ role: "user", content: message, createdAt: new Date() });
       await chatDoc.save();
-
       model = chatDoc.model || DEFAULT_MODEL;
       systemPrompt = chatDoc.systemPrompt || DEFAULT_SYSTEM;
       sessionMessages = chatDoc.messages;
-
       res.setHeader("x-session-id", chatDoc._id.toString());
     } else {
       const now = new Date().toISOString();
@@ -253,20 +223,14 @@ async function startServer() {
         messages: sessionMessages.map((m) => ({ role: m.role, content: m.content })),
         stream: true,
       });
-
       for await (const chunk of groqStream) {
         const delta = chunk?.choices?.[0]?.delta?.content ?? "";
         if (!delta) continue;
         assistantText += delta;
         res.write(delta);
       }
-
       if (authedUserId && chatDoc) {
-        chatDoc.messages.push({
-          role: "assistant",
-          content: assistantText,
-          createdAt: new Date(),
-        });
+        chatDoc.messages.push({ role: "assistant", content: assistantText, createdAt: new Date() });
         if (!chatDoc.title) chatDoc.title = titleFromUserMessage(message);
         await chatDoc.save();
       }
@@ -287,4 +251,3 @@ startServer().catch((err) => {
   console.error(err?.message ?? err);
   process.exitCode = 1;
 });
-

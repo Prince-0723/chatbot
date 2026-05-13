@@ -15,6 +15,7 @@ import {
   Check,
   Plus,
   MessageSquare,
+  ExternalLink,
 } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
 import ReactMarkdown from "react-markdown";
@@ -30,15 +31,10 @@ type AttachmentMeta = {
   filename: string;
   mimetype: string;
   size: number;
+  // cloudinaryUrl is the permanent URL used to open/view the file
+  cloudinaryUrl?: string;
+  // previewUrl is a local blob URL, only available in the current session
   previewUrl?: string;
-};
-
-type ChatMessage = {
-  role: ChatRole;
-  content: string;
-  createdAt?: string;
-  attachments?: AttachmentMeta[];
-  ragSources?: string[];
 };
 
 type PendingAttachment = {
@@ -47,7 +43,16 @@ type PendingAttachment = {
   previewUrl?: string;
   status: "pending" | "uploading" | "ready" | "error";
   fileId?: string;
+  cloudinaryUrl?: string;
   error?: string;
+};
+
+type ChatMessage = {
+  role: ChatRole;
+  content: string;
+  createdAt?: string;
+  attachments?: AttachmentMeta[];
+  ragSources?: string[];
 };
 
 type SessionMeta = { id: string; updatedAt: string; title?: string };
@@ -89,19 +94,19 @@ function isImage(mimetype: string) {
 // ── Strip markdown for plain-text copy ───────────────────────────────────────
 function stripMarkdown(text: string): string {
   return text
-    .replace(/^#{1,6}\s+/gm, "")          // headings
-    .replace(/\*\*(.+?)\*\*/g, "$1")       // bold
-    .replace(/\*(.+?)\*/g, "$1")           // italic
-    .replace(/`{3}[\s\S]*?`{3}/g, (m) =>  // code blocks — keep content
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`{3}[\s\S]*?`{3}/g, (m) =>
       m.replace(/```[\w]*\n?/g, "").replace(/```/g, "")
     )
-    .replace(/`(.+?)`/g, "$1")             // inline code
-    .replace(/^\s*[-*+]\s+/gm, "• ")       // unordered list
-    .replace(/^\s*\d+\.\s+/gm, (m) => m)  // ordered list — keep numbers
-    .replace(/\[(.+?)\]\(.+?\)/g, "$1")   // links
-    .replace(/!\[.*?\]\(.+?\)/g, "")       // images
-    .replace(/^>\s+/gm, "")               // blockquotes
-    .replace(/\n{3,}/g, "\n\n")           // excess blank lines
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "• ")
+    .replace(/^\s*\d+\.\s+/gm, (m) => m)
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/!\[.*?\]\(.+?\)/g, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -136,21 +141,35 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// ── Attachment Card in message ────────────────────────────────────────────────
+// ── Attachment Card shown inside chat messages ────────────────────────────────
+//
+// FIX 1 (File Opening): We now use `cloudinaryUrl` (permanent) first, falling
+// back to `previewUrl` (local blob, only in current session). This means:
+//   - In the current session:  local blob works → instant preview
+//   - In old/restored chats:   Cloudinary URL works → file still opens
+//
+// FIX 2 (History Persistence): cloudinaryUrl is saved to MongoDB with each
+// message, so when a chat is loaded it has the URL without needing re-upload.
 function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
-  if (isImage(attachment.mimetype) && attachment.previewUrl) {
+  // Prefer the permanent Cloudinary URL; fall back to current-session blob URL
+  const viewUrl = attachment.cloudinaryUrl || attachment.previewUrl || "";
+  const canOpen = Boolean(viewUrl);
+
+  if (isImage(attachment.mimetype) && viewUrl) {
     return (
       <>
+        {/* Clicking an image opens the lightbox */}
         <button
           onClick={() => setLightboxOpen(true)}
-          className="block rounded-xl overflow-hidden border border-white/20 hover:opacity-90 transition-opacity"
+          className="block rounded-xl overflow-hidden border border-white/20 hover:opacity-90 transition-opacity cursor-zoom-in"
           style={{ maxWidth: 220 }}
+          title="Click to view image"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={attachment.previewUrl}
+            src={viewUrl}
             alt={attachment.filename}
             className="w-full object-cover"
             style={{ maxHeight: 160 }}
@@ -159,6 +178,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
             {attachment.filename}
           </div>
         </button>
+
         {lightboxOpen && (
           <div
             className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
@@ -166,7 +186,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={attachment.previewUrl}
+              src={viewUrl}
               alt={attachment.filename}
               className="max-w-[90vw] max-h-[90vh] rounded-2xl shadow-2xl"
               onClick={(e) => e.stopPropagation()}
@@ -177,26 +197,51 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
             >
               <X size={28} />
             </button>
+            {/* Also offer direct link for download */}
+            <a
+              href={viewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute top-4 right-14 text-white/70 hover:text-white"
+              title="Open original"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink size={24} />
+            </a>
           </div>
         )}
       </>
     );
   }
 
+  // Non-image document card — clicking opens the file in a new tab
   return (
     <div className="flex items-center gap-2.5 bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-white/20 w-fit max-w-[260px]">
       <div className="shrink-0 w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
         <FileText size={16} className="text-white/90" />
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
         <div className="text-[10px] text-white/60">{formatBytes(attachment.size)}</div>
       </div>
+      {/* Open file button — works with Cloudinary URL in old chats too */}
+      {canOpen && (
+        <a
+          href={viewUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 p-1 rounded-md text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+          title="Open file"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <ExternalLink size={13} />
+        </a>
+      )}
     </div>
   );
 }
 
-// ── Pending Attachment Preview Card ──────────────────────────────────────────
+// ── Pending Attachment Preview Card (shown while uploading) ───────────────────
 function PendingCard({
   attachment,
   onRemove,
@@ -284,7 +329,7 @@ export default function Home() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Tracks all file IDs uploaded in the current session for persistent RAG context
+  // Tracks all file IDs uploaded in the current session for RAG context
   const sessionFileIds = useRef<string[]>([]);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -418,6 +463,8 @@ export default function Home() {
       apiUrl(`/sessions/${sessionId}`),
       { headers: { Authorization: `Bearer ${authToken}` } }
     );
+    // Messages from old chats carry cloudinaryUrl in their attachments,
+    // so AttachmentCard can still open/view files from history.
     setMessages(data.session.messages);
     setIsSidebarOpen(false);
     queueMicrotask(scrollToBottom);
@@ -433,10 +480,7 @@ export default function Home() {
     try {
       const data = await fetchJson<{ sessionId: string }>(apiUrl("/sessions"), {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
         body: JSON.stringify({}),
       });
       await refreshSessions();
@@ -463,11 +507,7 @@ export default function Home() {
       const nextSessions = await refreshSessions();
       if (activeSessionId === sessionId) {
         if (nextSessions.length > 0) await openSession(nextSessions[0].id);
-        else {
-          setActiveSessionId(null);
-          setMessages([]);
-          await createSession();
-        }
+        else { setActiveSessionId(null); setMessages([]); await createSession(); }
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -501,11 +541,8 @@ export default function Home() {
 
   useEffect(() => {
     if (!isAuthed) return;
-    if (sessions.length > 0 && !activeSessionId) {
-      openSession(sessions[0].id);
-    } else if (sessions.length === 0 && !activeSessionId && backendBase) {
-      createSession();
-    }
+    if (sessions.length > 0 && !activeSessionId) openSession(sessions[0].id);
+    else if (sessions.length === 0 && !activeSessionId && backendBase) createSession();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, activeSessionId, backendBase, isAuthed]);
 
@@ -537,19 +574,18 @@ export default function Home() {
           const err = await res.json().catch(() => ({ error: "Upload failed" }));
           setPendingAttachments((prev) =>
             prev.map((p) =>
-              p.tempId === pending.tempId
-                ? { ...p, status: "error", error: err.error }
-                : p
+              p.tempId === pending.tempId ? { ...p, status: "error", error: err.error } : p
             )
           );
           continue;
         }
 
         const data = await res.json();
+        // Store cloudinaryUrl returned by the backend on the pending attachment
         setPendingAttachments((prev) =>
           prev.map((p) =>
             p.tempId === pending.tempId
-              ? { ...p, status: "ready", fileId: data.fileId }
+              ? { ...p, status: "ready", fileId: data.fileId, cloudinaryUrl: data.cloudinaryUrl || "" }
               : p
           )
         );
@@ -557,11 +593,7 @@ export default function Home() {
         setPendingAttachments((prev) =>
           prev.map((p) =>
             p.tempId === pending.tempId
-              ? {
-                  ...p,
-                  status: "error",
-                  error: err instanceof Error ? err.message : "Upload failed",
-                }
+              ? { ...p, status: "error", error: err instanceof Error ? err.message : "Upload failed" }
               : p
           )
         );
@@ -587,12 +619,14 @@ export default function Home() {
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
+    // Build attachment metadata including cloudinaryUrl for persistence
     const attachmentMetas: AttachmentMeta[] = readyAttachments.map((p) => ({
       fileId: p.fileId!,
       filename: p.file.name,
       mimetype: p.file.type,
       size: p.file.size,
-      previewUrl: p.previewUrl,
+      cloudinaryUrl: p.cloudinaryUrl || "",
+      previewUrl: p.previewUrl, // blob URL — only valid this session
     }));
 
     const newFileIds = readyAttachments.map((p) => p.fileId!);
@@ -631,6 +665,14 @@ export default function Home() {
       if (hasFileContext) {
         body.useRag = true;
         body.fileIds = sessionFileIds.current;
+        // Send attachment metadata (with cloudinaryUrl) to be stored in the DB message
+        body.attachments = attachmentMetas.map((a) => ({
+          fileId: a.fileId,
+          filename: a.filename,
+          mimetype: a.mimetype,
+          size: a.size,
+          cloudinaryUrl: a.cloudinaryUrl || "",
+        }));
       }
 
       const res = await fetch(apiUrl(endpoint), {
@@ -928,7 +970,7 @@ export default function Home() {
                   <div className={[
                     m.role === "user" ? "flex flex-col items-end gap-2 max-w-[85%]" : "flex flex-col items-start gap-1.5 w-full",
                   ].join(" ")}>
-                    {/* Attachments above message */}
+                    {/* Attachments above message bubble */}
                     {m.attachments && m.attachments.length > 0 && (
                       <div className="flex flex-wrap gap-2 justify-end">
                         {m.attachments.map((att, i) => (
@@ -989,7 +1031,7 @@ export default function Home() {
                       </div>
                     )}
 
-                    {/* Copy + sources row for assistant */}
+                    {/* Copy + RAG sources row for assistant */}
                     {m.role === "assistant" && m.content && !isStreaming && (
                       <div className="flex items-center gap-2 flex-wrap pl-1">
                         <CopyButton text={m.content} />
@@ -1018,7 +1060,6 @@ export default function Home() {
         {/* ── FOOTER ────────────────────────────────────────────────────────── */}
         <footer className="shrink-0 bg-white/90 dark:bg-[#111110]/90 backdrop-blur-md border-t border-zinc-200 dark:border-white/[0.08] px-4 pt-3 pb-4">
           <div className="max-w-3xl mx-auto space-y-2">
-
             {/* Pending attachments */}
             {pendingAttachments.length > 0 && (
               <div className="flex gap-2 flex-wrap px-1 pb-1">

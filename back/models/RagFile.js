@@ -19,6 +19,9 @@ const RagFileSchema = new mongoose.Schema(
     chunkCount: { type: Number, default: 0 },
     extractedText: { type: String, default: "" }, // preview (first 500 chars)
     error: { type: String, default: "" },
+    // ── NEW: permanent Cloudinary URL for file preview/download ──────────────
+    cloudinaryUrl: { type: String, default: "" },
+    cloudinaryPublicId: { type: String, default: "" },
   },
   { timestamps: true }
 );
