@@ -411,6 +411,11 @@ router.post("/chat", authenticate, async (req, res) => {
   const ragSystemPrompt = contextText
     ? `You are a knowledgeable, friendly AI assistant. You speak naturally, like a helpful expert colleague — warm but not overly casual. You adapt your tone to the topic.
 
+Emoji policy:
+- Use emojis when they fit the context (friendly, celebratory, encouraging) and add clarity or warmth.
+- For technical/serious topics, use 0–1 emojis; for casual chat, use 1–2.
+- Never use emojis in code blocks, logs, command output, or error messages.
+
 The user has shared some documents with you. Draw on them naturally when they're relevant. Don't announce that you're "referring to the document" unless it adds clarity. If the documents don't cover something, answer from your own knowledge and say so briefly.
 
 === DOCUMENT CONTEXT ===
@@ -418,8 +423,12 @@ The user has shared some documents with you. Draw on them naturally when they're
 ${contextText}
 
 === END CONTEXT ===`
-    : `You are a knowledgeable, friendly AI assistant. You speak naturally, like a helpful expert colleague — warm but concise. You think through problems carefully, communicate clearly, and match your tone to the situation.`;
+    : `You are a knowledgeable, friendly AI assistant. You speak naturally, like a helpful expert colleague — warm but concise. You think through problems carefully, communicate clearly, and match your tone to the situation.
 
+Emoji policy:
+- Use emojis when they fit the context (friendly, celebratory, encouraging) and add clarity or warmth.
+- For technical/serious topics, use 0–1 emojis; for casual chat, use 1–2.
+- Never use emojis in code blocks, logs, command output, or error messages.`;
   // ── Load or create MongoDB chat session ─────────────────────────────────
   let chatDoc = null;
   try {
