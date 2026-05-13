@@ -30,6 +30,49 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* ── Fix: Force list styles inside ReactMarkdown prose blocks.
+   Tailwind v4 + typography plugin resets lists aggressively;
+   @layer utilities gives us higher priority than plugin styles. ── */
+@layer utilities {
+  .prose ul,
+  .prose :where(ul) {
+    list-style-type: disc !important;
+    padding-left: 1.625rem !important;
+    margin-top: 0.5rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  .prose ol,
+  .prose :where(ol) {
+    list-style-type: decimal !important;
+    padding-left: 1.625rem !important;
+    margin-top: 0.5rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  .prose li,
+  .prose :where(li) {
+    display: list-item !important;
+    margin-top: 0.25rem !important;
+    margin-bottom: 0.25rem !important;
+  }
+
+  .prose ul ul,
+  .prose :where(ul ul) {
+    list-style-type: circle !important;
+  }
+
+  .prose ul ul ul,
+  .prose :where(ul ul ul) {
+    list-style-type: square !important;
+  }
+
+  .prose ol ol,
+  .prose :where(ol ol) {
+    list-style-type: lower-alpha !important;
+  }
+}
+
 /* Attachment entry animation */
 @keyframes fade-in {
   from { opacity: 0; }

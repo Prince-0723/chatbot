@@ -26,9 +26,9 @@ import { Chat } from "./models/Chat.js";
 // ─────────────────────────────────────────────────────────────
 
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "dgnnf0ar4",
-  api_key: process.env.CLOUDINARY_API_KEY || "71329456252846",
-  api_secret: process.env.CLOUDINARY_API_SECRET || "bArEGYw4UAIOTSbWBsiwUj3s-mE",
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
   secure: true,
 });
 
@@ -37,11 +37,20 @@ cloudinary.config({
  * Images are stored as image resources; documents as raw.
  */
 async function uploadToCloudinary(buffer, mimetype, filename) {
-  return new Promise((resolve, reject) => {
-    const isImg = mimetype.startsWith("image/");
-    const resourceType = isImg ? "image" : "raw";
 
-    // Use a clean public_id (strip extension for Cloudinary, it adds its own)
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    // Fix: PDFs should use "image" resource type so Cloudinary can serve/preview them
+    const isPdf = mimetype === "application/pdf";
+    const isImg = mimetype.startsWith("image/");
+    const resourceType = (isImg || isPdf) ? "image" : "raw";
+
     const publicId = `chatbot/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
     const stream = cloudinary.uploader.upload_stream(
@@ -49,8 +58,9 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
         resource_type: resourceType,
         public_id: publicId,
         overwrite: false,
-        // Keep forever — no expiry
         invalidate: false,
+        // For PDFs — generate a preview page
+        ...(isPdf && { format: "jpg", pages: true }),
       },
       (error, result) => {
         if (error) return reject(error);
@@ -144,7 +154,7 @@ async function extractText(buffer, mimetype) {
 
   if (
     mimetype ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     mimetype === "application/msword"
   ) {
     const result = await mammoth.extractRawText({ buffer });
@@ -448,9 +458,9 @@ ${contextText}
   const groqMessages = chatDoc
     ? chatDoc.messages.map((m) => ({ role: m.role, content: m.content }))
     : [
-        { role: "system", content: ragSystemPrompt },
-        { role: "user", content: message },
-      ];
+      { role: "system", content: ragSystemPrompt },
+      { role: "user", content: message },
+    ];
 
   // ── Response headers ─────────────────────────────────────────────────────
   res.status(200);

@@ -254,29 +254,30 @@ function PendingCard({
   return (
     <div className="relative group flex items-center gap-2.5 bg-zinc-100 dark:bg-zinc-800 rounded-xl px-3 py-2.5 border border-zinc-200 dark:border-zinc-700 w-fit max-w-[220px] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
       {showThumb ? (
+        // Image thumbnail preview
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={attachment.previewUrl}
           alt={attachment.file.name}
-          className="w-10 h-10 rounded-lg object-cover shrink-0"
+          className="w-10 h-10 rounded-lg object-cover shrink-0 border border-zinc-200 dark:border-zinc-600"
         />
       ) : (
-        <div className="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center shrink-0">
+        <div className="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center shrink-0 border border-indigo-200 dark:border-indigo-800/40">
           <FileText size={18} className="text-indigo-500" />
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+        <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={attachment.file.name}>
           {attachment.file.name}
         </div>
         <div className="text-[10px] text-zinc-500 mt-0.5">
           {attachment.status === "uploading" ? (
             <span className="flex items-center gap-1">
               <Loader2 size={10} className="animate-spin" />
-              Processing…
+              Uploading…
             </span>
           ) : attachment.status === "error" ? (
-            <span className="text-red-500">{attachment.error || "Failed"}</span>
+            <span className="text-red-500" title={attachment.error}>{attachment.error || "Failed"}</span>
           ) : attachment.status === "ready" ? (
             <span className="text-emerald-500 flex items-center gap-1">
               <Check size={10} />
@@ -550,10 +551,12 @@ export default function Home() {
   async function handleFilesSelected(fileList: FileList | null) {
     if (!fileList || fileList.length === 0 || !isAuthed) return;
 
+    // Create blob preview URLs immediately so thumbnails appear in the input
     const newPending: PendingAttachment[] = Array.from(fileList).map((file) => ({
       tempId: `temp-${Date.now()}-${Math.random()}`,
       file,
-      previewUrl: isImage(file.type) ? URL.createObjectURL(file) : undefined,
+      // Blob URL lets the image render as a thumbnail right away in PendingCard
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
       status: "uploading" as const,
     }));
 
@@ -581,11 +584,19 @@ export default function Home() {
         }
 
         const data = await res.json();
-        // Store cloudinaryUrl returned by the backend on the pending attachment
+
+        // Backend returns cloudinaryUrl (real Cloudinary URL or base64 data URL for images).
+        // For non-image docs when Cloudinary is not configured, create a local blob URL so
+        // the user can still open the file from the chat in the current session.
+        let resolvedUrl: string = data.cloudinaryUrl || "";
+        if (!resolvedUrl && !pending.file.type.startsWith("image/")) {
+          resolvedUrl = URL.createObjectURL(pending.file);
+        }
+
         setPendingAttachments((prev) =>
           prev.map((p) =>
             p.tempId === pending.tempId
-              ? { ...p, status: "ready", fileId: data.fileId, cloudinaryUrl: data.cloudinaryUrl || "" }
+              ? { ...p, status: "ready", fileId: data.fileId, cloudinaryUrl: resolvedUrl }
               : p
           )
         );
@@ -604,7 +615,9 @@ export default function Home() {
   function removePending(tempId: string) {
     setPendingAttachments((prev) => {
       const found = prev.find((p) => p.tempId === tempId);
-      if (found?.previewUrl) URL.revokeObjectURL(found.previewUrl);
+      // Revoke any blob URLs we created to free memory
+      if (found?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(found.previewUrl);
+      if (found?.cloudinaryUrl?.startsWith("blob:")) URL.revokeObjectURL(found.cloudinaryUrl);
       return prev.filter((p) => p.tempId !== tempId);
     });
   }
@@ -1013,8 +1026,8 @@ export default function Home() {
                                   "prose-p:text-zinc-700 dark:prose-p:text-zinc-300 prose-p:mb-3 prose-p:last:mb-0",
                                   "prose-strong:text-zinc-900 dark:prose-strong:text-zinc-100 prose-strong:font-semibold",
                                   "prose-em:text-zinc-600 dark:prose-em:text-zinc-400",
-                                  "prose-ul:my-2 prose-li:my-0.5 prose-li:text-zinc-700 dark:prose-li:text-zinc-300",
-                                  "prose-ol:my-2",
+                                  "prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5 prose-li:text-zinc-700 dark:prose-li:text-zinc-300",
+                                  "prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5",
                                   "prose-code:text-indigo-600 dark:prose-code:text-indigo-300 prose-code:bg-indigo-50 dark:prose-code:bg-indigo-900/30 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-xs prose-code:font-medium prose-code:before:content-none prose-code:after:content-none",
                                   "prose-pre:rounded-xl prose-pre:bg-zinc-900 dark:prose-pre:bg-black/40 prose-pre:border prose-pre:border-zinc-200 dark:prose-pre:border-zinc-700/50 prose-pre:shadow-sm prose-pre:overflow-x-auto",
                                   "prose-pre:my-3 prose-pre:text-zinc-100",
