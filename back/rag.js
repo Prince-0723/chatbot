@@ -140,9 +140,31 @@ async function embed(text) {
   const result = await getHf().featureExtraction({
     model: EMBED_MODEL,
     inputs: text,
+    normalize: true,
   });
-  const embedding = Array.from(result.flat ? result.flat() : result);
-  return embedding.map(Number);
+
+  // HF featureExtraction can return a Tensor object, 2D array [[...]], or 1D array
+  let flat;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    // Tensor-like object — pull the underlying data buffer
+    const data = result.data ?? result.ort_tensor?.data ?? result.cpuData;
+    if (data) {
+      flat = Array.from(data).map(Number);
+    } else {
+      flat = Array.from(Object.values(result)).map(Number);
+    }
+  } else if (Array.isArray(result) && Array.isArray(result[0])) {
+    // 2D array batch — take first row
+    flat = result[0].map(Number);
+  } else {
+    flat = Array.from(result).map(Number);
+  }
+
+  if (!flat || flat.length === 0) {
+    throw new Error("embed(): HuggingFace returned empty embedding. Check HF_API_KEY.");
+  }
+
+  return flat;
 }
 
 async function extractText(buffer, mimetype) {
@@ -355,16 +377,30 @@ router.delete("/files/:id", authenticate, async (req, res) => {
   if (!file) return res.status(404).json({ error: "File not found" });
 
   try {
-    // Remove vectors from Pinecone
+    // Remove vectors from Pinecone using deleteMany with IDs array.
+    // Pinecone Starter plan doesn't support deleteMany with ID list — fall back
+    // to deleteAll with a metadata filter, which works on all plans.
     const index = getPinecone().index(PINECONE_INDEX);
     const namespace = `user-${userId}`;
-    const toDelete = [];
-    for (let i = 0; i < file.chunkCount; i++) toDelete.push(`${fileId}-chunk-${i}`);
-    if (toDelete.length > 0) await index.namespace(namespace).deleteMany(toDelete);
+    try {
+      await index.namespace(namespace).deleteMany({ fileId });
+    } catch {
+      // If filter-based delete is unsupported (some legacy configs), try ID list
+      const toDelete = [];
+      for (let i = 0; i < file.chunkCount; i++) toDelete.push(`${fileId}-chunk-${i}`);
+      if (toDelete.length > 0) {
+        // Delete in small batches sequentially to avoid request size limits
+        const batchSize = 100;
+        for (let i = 0; i < toDelete.length; i += batchSize) {
+          await index.namespace(namespace).deleteMany(toDelete.slice(i, i + batchSize));
+        }
+      }
+    }
 
-    // Optionally remove from Cloudinary (best-effort)
+    // Remove from Cloudinary (best-effort). PDFs are uploaded as "image" resource type.
     if (file.cloudinaryPublicId) {
-      const resourceType = file.mimetype.startsWith("image/") ? "image" : "raw";
+      const isPdf = file.mimetype === "application/pdf";
+      const resourceType = (file.mimetype.startsWith("image/") || isPdf) ? "image" : "raw";
       cloudinary.uploader.destroy(file.cloudinaryPublicId, { resource_type: resourceType })
         .catch((e) => console.warn("[Cloudinary delete]", e.message));
     }
@@ -374,6 +410,48 @@ router.delete("/files/:id", authenticate, async (req, res) => {
   } catch (err) {
     console.error("[RAG delete error]", err);
     return res.status(500).json({ error: err?.message || "Delete failed" });
+  }
+});
+
+/**
+ * DELETE /rag/files
+ * Bulk-delete ALL RAG files for the authenticated user.
+ * Removes vectors from Pinecone, assets from Cloudinary, and records from MongoDB.
+ * Called by the frontend's "Clear all history" action.
+ */
+router.delete("/files", authenticate, async (req, res) => {
+  const userId = req.user.sub;
+  try {
+    const files = await RagFile.find({ userId }).lean();
+
+    // Delete all vectors for this user from their namespace
+    const index = getPinecone().index(PINECONE_INDEX);
+    const namespace = `user-${userId}`;
+    try {
+      // deleteAll removes every vector in the namespace — fastest option
+      await index.namespace(namespace).deleteAll();
+    } catch (pineconeErr) {
+      console.warn("[Pinecone bulk delete warning]", pineconeErr?.message);
+    }
+
+    // Remove all Cloudinary assets (best-effort, parallel)
+    const cloudinaryDeletes = files
+      .filter((f) => f.cloudinaryPublicId)
+      .map((f) => {
+        const isPdf = f.mimetype === "application/pdf";
+        const resourceType = (f.mimetype.startsWith("image/") || isPdf) ? "image" : "raw";
+        return cloudinary.uploader
+          .destroy(f.cloudinaryPublicId, { resource_type: resourceType })
+          .catch((e) => console.warn("[Cloudinary bulk delete]", e.message));
+      });
+    await Promise.allSettled(cloudinaryDeletes);
+
+    // Remove all MongoDB records
+    const result = await RagFile.deleteMany({ userId });
+    return res.json({ ok: true, deletedCount: result.deletedCount ?? 0 });
+  } catch (err) {
+    console.error("[RAG bulk delete error]", err);
+    return res.status(500).json({ error: err?.message || "Bulk delete failed" });
   }
 });
 

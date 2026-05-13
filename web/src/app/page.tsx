@@ -237,8 +237,8 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   }
 
   return (
-    <div className="flex items-center gap-2.5 bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-white/20 w-fit max-w-[260px]">
-      <div className="shrink-0 w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+    <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
         <FileText size={16} className="text-white/90" />
       </div>
       <div className="min-w-0 flex-1">
@@ -607,23 +607,13 @@ export default function Home() {
     if (!window.confirm("Clear all chat history? This will also remove all uploaded files.")) return;
     setError(null);
     try {
-      // 1. Fetch all RAG files and delete each from Pinecone + Cloudinary + MongoDB
+      // 1. Bulk-delete ALL RAG files: Pinecone vectors + Cloudinary assets + MongoDB records
+      //    Uses DELETE /rag/files which handles everything server-side in one request.
       try {
-        const res = await fetch(apiUrl("/rag/files"), {
+        await fetch(apiUrl("/rag/files"), {
+          method: "DELETE",
           headers: { Authorization: `Bearer ${authToken}` },
         });
-        if (res.ok) {
-          const data = await res.json();
-          const files: Array<{ id: string }> = data.files || [];
-          await Promise.all(
-            files.map((f) =>
-              fetch(apiUrl(`/rag/files/${f.id}`), {
-                method: "DELETE",
-                headers: { Authorization: `Bearer ${authToken}` },
-              }).catch(() => {})
-            )
-          );
-        }
       } catch {}
 
       // 2. Delete all chat sessions from MongoDB
