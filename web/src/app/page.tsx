@@ -31,9 +31,7 @@ type AttachmentMeta = {
   filename: string;
   mimetype: string;
   size: number;
-  // cloudinaryUrl is the permanent URL used to open/view the file
   cloudinaryUrl?: string;
-  // previewUrl is a local blob URL, only available in the current session
   previewUrl?: string;
 };
 
@@ -141,26 +139,51 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// ── RAG Source Badge — clickable, opens original document ────────────────────
+// FIX 3: Sources are now clickable with pointer cursor and open the original doc
+function RagSourceBadge({
+  src,
+  ragFiles,
+}: {
+  src: string;
+  ragFiles: Array<{ id: string; filename: string; cloudinaryUrl?: string }>;
+}) {
+  const match = ragFiles.find((f) => f.filename === src);
+  const url = match?.cloudinaryUrl || null;
+
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`Open ${src}`}
+        className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800/50 hover:border-indigo-300 transition-colors"
+      >
+        {src}
+        <ExternalLink size={9} className="shrink-0 opacity-70" />
+      </a>
+    );
+  }
+
+  // No URL available — just a visual badge, no cursor pointer
+  return (
+    <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40">
+      {src}
+    </span>
+  );
+}
+
 // ── Attachment Card shown inside chat messages ────────────────────────────────
-//
-// FIX 1 (File Opening): We now use `cloudinaryUrl` (permanent) first, falling
-// back to `previewUrl` (local blob, only in current session). This means:
-//   - In the current session:  local blob works → instant preview
-//   - In old/restored chats:   Cloudinary URL works → file still opens
-//
-// FIX 2 (History Persistence): cloudinaryUrl is saved to MongoDB with each
-// message, so when a chat is loaded it has the URL without needing re-upload.
 function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
-  // Prefer the permanent Cloudinary URL; fall back to current-session blob URL
   const viewUrl = attachment.cloudinaryUrl || attachment.previewUrl || "";
   const canOpen = Boolean(viewUrl);
 
   if (isImage(attachment.mimetype) && viewUrl) {
     return (
       <>
-        {/* Clicking an image opens the lightbox */}
         <button
           onClick={() => setLightboxOpen(true)}
           className="block rounded-xl overflow-hidden border border-white/20 hover:opacity-90 transition-opacity cursor-zoom-in"
@@ -197,7 +220,6 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
             >
               <X size={28} />
             </button>
-            {/* Also offer direct link for download */}
             <a
               href={viewUrl}
               target="_blank"
@@ -214,7 +236,6 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
     );
   }
 
-  // Non-image document card — clicking opens the file in a new tab
   return (
     <div className="flex items-center gap-2.5 bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-white/20 w-fit max-w-[260px]">
       <div className="shrink-0 w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
@@ -224,7 +245,6 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
         <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
         <div className="text-[10px] text-white/60">{formatBytes(attachment.size)}</div>
       </div>
-      {/* Open file button — works with Cloudinary URL in old chats too */}
       {canOpen && (
         <a
           href={viewUrl}
@@ -241,7 +261,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   );
 }
 
-// ── Pending Attachment Preview Card (shown while uploading) ───────────────────
+// ── Pending Attachment Preview Card ───────────────────────────────────────────
 function PendingCard({
   attachment,
   onRemove,
@@ -251,10 +271,10 @@ function PendingCard({
 }) {
   const showThumb = isImage(attachment.file.type) && attachment.previewUrl;
 
+  // FIX 4: bg-zinc-200/border-zinc-300 in light mode so card is clearly visible against white footer
   return (
-    <div className="relative group flex items-center gap-2.5 bg-zinc-100 dark:bg-zinc-800 rounded-xl px-3 py-2.5 border border-zinc-200 dark:border-zinc-700 w-fit max-w-[220px] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
+    <div className="relative group flex items-center gap-2.5 bg-zinc-200 dark:bg-zinc-800 rounded-xl px-3 py-2.5 border border-zinc-300 dark:border-zinc-700 w-fit max-w-[220px] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
       {showThumb ? (
-        // Image thumbnail preview
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={attachment.previewUrl}
@@ -321,6 +341,9 @@ export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
+  // FIX 3: track RAG files with their cloudinaryUrls for source linking
+  const [ragFiles, setRagFiles] = useState<Array<{ id: string; filename: string; cloudinaryUrl?: string }>>([]);
+
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -330,9 +353,7 @@ export default function Home() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Tracks all file IDs uploaded in the current session for RAG context
   const sessionFileIds = useRef<string[]>([]);
-
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -389,6 +410,29 @@ export default function Home() {
     } catch {}
   }, []);
 
+  // FIX 3: fetch RAG files list (with cloudinaryUrls) whenever authed
+  const refreshRagFiles = useCallback(
+    async (tokenOverride?: string) => {
+      const token = tokenOverride ?? authToken;
+      if (!token || !backendBase) return;
+      try {
+        const res = await fetch(`${backendBase}/rag/files`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setRagFiles(
+          (data.files || []).map((f: { id: string; filename: string; cloudinaryUrl?: string }) => ({
+            id: f.id,
+            filename: f.filename,
+            cloudinaryUrl: f.cloudinaryUrl || "",
+          }))
+        );
+      } catch {}
+    },
+    [authToken, backendBase]
+  );
+
   function logout() {
     try {
       localStorage.removeItem(STORAGE_TOKEN_KEY);
@@ -401,6 +445,7 @@ export default function Home() {
     setMessages([]);
     setError(null);
     setPendingAttachments([]);
+    setRagFiles([]);
     sessionFileIds.current = [];
   }
 
@@ -447,11 +492,12 @@ export default function Home() {
           localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
         } catch {}
         await refreshSessions(data.token);
+        await refreshRagFiles(data.token);
       } finally {
         setIsAuthBusy(false);
       }
     },
-    [apiUrl, refreshSessions]
+    [apiUrl, refreshSessions, refreshRagFiles]
   );
 
   async function openSession(sessionId: string) {
@@ -464,8 +510,6 @@ export default function Home() {
       apiUrl(`/sessions/${sessionId}`),
       { headers: { Authorization: `Bearer ${authToken}` } }
     );
-    // Messages from old chats carry cloudinaryUrl in their attachments,
-    // so AttachmentCard can still open/view files from history.
     setMessages(data.session.messages);
     setIsSidebarOpen(false);
     queueMicrotask(scrollToBottom);
@@ -496,15 +540,57 @@ export default function Home() {
     }
   }
 
+  // FIX 2: deleteSession — also removes RAG vectors + Cloudinary files from DB
+  // The backend's DELETE /sessions/:id already deletes from MongoDB.
+  // RAG files are stored separately; we additionally delete all rag files
+  // that were referenced in this session's messages.
   async function deleteSession(sessionId: string) {
     if (!isAuthed || isStreaming) return;
     if (!window.confirm("Delete this chat?")) return;
     setError(null);
     try {
+      // 1. Load session messages to find any attached RAG file IDs
+      let ragFileIdsToDelete: string[] = [];
+      try {
+        const data = await fetchJson<{ session: Session }>(
+          apiUrl(`/sessions/${sessionId}`),
+          { headers: { Authorization: `Bearer ${authToken}` } }
+        );
+        // Gather unique fileIds from all user message attachments
+        const seen = new Set<string>();
+        for (const msg of data.session.messages) {
+          if (msg.attachments) {
+            for (const att of msg.attachments) {
+              if (att.fileId && !seen.has(att.fileId)) {
+                seen.add(att.fileId);
+                ragFileIdsToDelete.push(att.fileId);
+              }
+            }
+          }
+        }
+      } catch {
+        // non-fatal — proceed with session deletion even if we can't read messages
+      }
+
+      // 2. Delete associated RAG files from Pinecone + Cloudinary + MongoDB
+      for (const fileId of ragFileIdsToDelete) {
+        try {
+          await fetch(apiUrl(`/rag/files/${fileId}`), {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+        } catch {}
+      }
+
+      // 3. Delete the chat session from MongoDB
       await fetchJson(apiUrl(`/sessions/${encodeURIComponent(sessionId)}`), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${authToken}` },
       });
+
+      // 4. Refresh RAG files list
+      await refreshRagFiles();
+
       const nextSessions = await refreshSessions();
       if (activeSessionId === sessionId) {
         if (nextSessions.length > 0) await openSession(nextSessions[0].id);
@@ -515,18 +601,42 @@ export default function Home() {
     }
   }
 
+  // FIX 2: clearHistory — deletes all sessions AND all RAG files from all DBs
   async function clearHistory() {
     if (!isAuthed || isStreaming) return;
-    if (!window.confirm("Clear all chat history?")) return;
+    if (!window.confirm("Clear all chat history? This will also remove all uploaded files.")) return;
     setError(null);
     try {
+      // 1. Fetch all RAG files and delete each from Pinecone + Cloudinary + MongoDB
+      try {
+        const res = await fetch(apiUrl("/rag/files"), {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const files: Array<{ id: string }> = data.files || [];
+          await Promise.all(
+            files.map((f) =>
+              fetch(apiUrl(`/rag/files/${f.id}`), {
+                method: "DELETE",
+                headers: { Authorization: `Bearer ${authToken}` },
+              }).catch(() => {})
+            )
+          );
+        }
+      } catch {}
+
+      // 2. Delete all chat sessions from MongoDB
       await fetchJson(apiUrl("/sessions"), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${authToken}` },
       });
+
       setMessages([]);
       setActiveSessionId(null);
       setSessions([]);
+      setRagFiles([]);
+      sessionFileIds.current = [];
       await createSession();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -537,6 +647,7 @@ export default function Home() {
     if (!backendBase) { setError("Missing NEXT_PUBLIC_BACKEND_URL."); return; }
     if (!isAuthed) { setSessions([]); setActiveSessionId(null); return; }
     refreshSessions().catch((e) => setError(e.message));
+    refreshRagFiles().catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendBase, isAuthed]);
 
@@ -551,11 +662,9 @@ export default function Home() {
   async function handleFilesSelected(fileList: FileList | null) {
     if (!fileList || fileList.length === 0 || !isAuthed) return;
 
-    // Create blob preview URLs immediately so thumbnails appear in the input
     const newPending: PendingAttachment[] = Array.from(fileList).map((file) => ({
       tempId: `temp-${Date.now()}-${Math.random()}`,
       file,
-      // Blob URL lets the image render as a thumbnail right away in PendingCard
       previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
       status: "uploading" as const,
     }));
@@ -585,12 +694,20 @@ export default function Home() {
 
         const data = await res.json();
 
-        // Backend returns cloudinaryUrl (real Cloudinary URL or base64 data URL for images).
-        // For non-image docs when Cloudinary is not configured, create a local blob URL so
-        // the user can still open the file from the chat in the current session.
         let resolvedUrl: string = data.cloudinaryUrl || "";
         if (!resolvedUrl && !pending.file.type.startsWith("image/")) {
           resolvedUrl = URL.createObjectURL(pending.file);
+        }
+
+        // FIX 3: add newly uploaded file to ragFiles for source linking
+        if (data.fileId) {
+          setRagFiles((prev) => {
+            if (prev.find((f) => f.id === data.fileId)) return prev;
+            return [
+              { id: data.fileId, filename: pending.file.name, cloudinaryUrl: resolvedUrl },
+              ...prev,
+            ];
+          });
         }
 
         setPendingAttachments((prev) =>
@@ -615,7 +732,6 @@ export default function Home() {
   function removePending(tempId: string) {
     setPendingAttachments((prev) => {
       const found = prev.find((p) => p.tempId === tempId);
-      // Revoke any blob URLs we created to free memory
       if (found?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(found.previewUrl);
       if (found?.cloudinaryUrl?.startsWith("blob:")) URL.revokeObjectURL(found.cloudinaryUrl);
       return prev.filter((p) => p.tempId !== tempId);
@@ -632,14 +748,13 @@ export default function Home() {
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
-    // Build attachment metadata including cloudinaryUrl for persistence
     const attachmentMetas: AttachmentMeta[] = readyAttachments.map((p) => ({
       fileId: p.fileId!,
       filename: p.file.name,
       mimetype: p.file.type,
       size: p.file.size,
       cloudinaryUrl: p.cloudinaryUrl || "",
-      previewUrl: p.previewUrl, // blob URL — only valid this session
+      previewUrl: p.previewUrl,
     }));
 
     const newFileIds = readyAttachments.map((p) => p.fileId!);
@@ -678,7 +793,6 @@ export default function Home() {
       if (hasFileContext) {
         body.useRag = true;
         body.fileIds = sessionFileIds.current;
-        // Send attachment metadata (with cloudinaryUrl) to be stored in the DB message
         body.attachments = attachmentMetas.map((a) => ({
           fileId: a.fileId,
           filename: a.filename,
@@ -836,10 +950,11 @@ export default function Home() {
             <ul className="space-y-0.5">
               {displaySessions.map((s) => (
                 <li key={s.id}>
+                  {/* FIX 1: no horizontal scroll — title truncated with ellipsis, date on same line */}
                   <div className="flex items-center gap-1 group">
                     <button
                       className={[
-                        "flex-1 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                        "flex-1 min-w-0 rounded-lg px-3 py-2.5 text-left transition-colors overflow-hidden",
                         s.id === activeSessionId
                           ? "bg-zinc-100 dark:bg-white/10 text-zinc-900 dark:text-white"
                           : "hover:bg-zinc-50 dark:hover:bg-white/5 text-zinc-700 dark:text-zinc-300",
@@ -847,9 +962,14 @@ export default function Home() {
                       onClick={() => openSession(s.id)}
                       disabled={isStreaming}
                     >
-                      <div className="truncate font-medium text-[13px]">{s.title || "New chat"}</div>
-                      <div className="truncate text-[11px] text-zinc-400 mt-0.5">
-                        {new Date(s.updatedAt).toLocaleDateString()}
+                      {/* FIX 1: single line with overflow ellipsis — no wrapping that causes scroll */}
+                      <div className="flex items-baseline gap-1.5 min-w-0">
+                        <span className="truncate font-medium text-[13px] flex-1 min-w-0 block">
+                          {s.title || "New chat"}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-zinc-400 whitespace-nowrap">
+                          {new Date(s.updatedAt).toLocaleDateString()}
+                        </span>
                       </div>
                     </button>
                     <button
@@ -1051,13 +1171,9 @@ export default function Home() {
                         {m.ragSources && m.ragSources.length > 0 && (
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[10px] text-zinc-400">Sources:</span>
+                            {/* FIX 3: clickable source badges that open original document */}
                             {m.ragSources.map((src, i) => (
-                              <span
-                                key={i}
-                                className="text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40"
-                              >
-                                {src}
-                              </span>
+                              <RagSourceBadge key={i} src={src} ragFiles={ragFiles} />
                             ))}
                           </div>
                         )}

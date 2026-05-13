@@ -51,7 +51,9 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
     const isImg = mimetype.startsWith("image/");
     const resourceType = (isImg || isPdf) ? "image" : "raw";
 
-    const publicId = `chatbot/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    // Separate subfolders by type: chatbot/images/, chatbot/documents/, chatbot/pdfs/
+    const subfolder = isImg ? "images" : isPdf ? "pdfs" : "documents";
+    const publicId = `chatbot/${subfolder}/${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
     const stream = cloudinary.uploader.upload_stream(
       {
