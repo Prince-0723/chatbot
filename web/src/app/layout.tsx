@@ -14,7 +14,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  interactiveWidget: "resizes-visual",
+  interactiveWidget: "resizes-content",
 };
 
 const THEME_INIT_SCRIPT = `(() => {
@@ -41,8 +41,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full overflow-hidden antialiased" suppressHydrationWarning>
-      <body className="h-full overflow-hidden flex flex-col">
+    <html lang="en" className="h-dvh antialiased" suppressHydrationWarning>
+      <body className="h-dvh overflow-hidden flex flex-col">
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <Providers>{children}</Providers>
       </body>

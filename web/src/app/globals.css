@@ -24,12 +24,20 @@ html[data-theme="dark"] {
   --foreground: #ededed;
 }
 
-html, body {
+html {
   height: 100%;
+  height: 100dvh;
+}
+
+body {
+  height: 100%;
+  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  position: fixed;
-  width: 100%;
+  /* Removed position:fixed — it breaks mobile keyboard (viewport doesn't
+     shrink when soft keyboard opens, so footer slides under the keyboard).
+     Using dvh (dynamic viewport height) instead so the layout re-calculates
+     correctly whenever the keyboard is shown or hidden. */
 }
 
 body {

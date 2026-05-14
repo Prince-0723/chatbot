@@ -941,7 +941,7 @@ export default function Home() {
   const fileContextCount = sessionFileIds.current.length;
 
   return (
-    <div className="fixed inset-0 flex w-screen overflow-hidden bg-[#f8f7f4] text-zinc-900 dark:bg-[#111110] dark:text-zinc-100">
+    <div className="flex h-dvh w-screen overflow-hidden bg-[#f8f7f4] text-zinc-900 dark:bg-[#111110] dark:text-zinc-100">
       {isSidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40 lg:hidden"
