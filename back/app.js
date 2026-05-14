@@ -53,12 +53,12 @@ function toSession(doc) {
       // ── Persist attachment metadata (including cloudinaryUrl) ──────────────
       attachments: m.attachments?.length > 0
         ? m.attachments.map((a) => ({
-            fileId: a.fileId,
-            filename: a.filename,
-            mimetype: a.mimetype,
-            size: a.size,
-            cloudinaryUrl: a.cloudinaryUrl || "",
-          }))
+          fileId: a.fileId,
+          filename: a.filename,
+          mimetype: a.mimetype,
+          size: a.size,
+          cloudinaryUrl: a.cloudinaryUrl || "",
+        }))
         : undefined,
       // ── Persist RAG source names shown below assistant messages ────────────
       ragSources: m.ragSources?.length > 0 ? m.ragSources : undefined,
@@ -83,10 +83,14 @@ async function startServer() {
   const origin = process.env.CORS_ORIGIN?.trim() || defaultOrigin;
   app.use(
     cors({
-      origin: origin === "*" ? "*" : origin,
+      origin: [
+        "http://localhost:3000",
+        "https://chatbot-gray-tau-17.vercel.app",
+      ],
       methods: ["GET", "POST", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
       exposedHeaders: ["x-session-id", "x-rag-sources"],
+      credentials: true,
       maxAge: 86400,
     })
   );
