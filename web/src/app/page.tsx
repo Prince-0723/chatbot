@@ -941,7 +941,7 @@ export default function Home() {
   const fileContextCount = sessionFileIds.current.length;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#f8f7f4] text-zinc-900 dark:bg-[#111110] dark:text-zinc-100">
+    <div className="flex h-dvh w-screen overflow-hidden bg-[#f8f7f4] text-zinc-900 dark:bg-[#111110] dark:text-zinc-100">
       {isSidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40 lg:hidden"
@@ -1263,7 +1263,7 @@ export default function Home() {
         </div>
 
         {/* ── FOOTER ────────────────────────────────────────────────────────── */}
-        <footer className="shrink-0 bg-white/90 dark:bg-[#111110]/90 backdrop-blur-md border-t border-zinc-200 dark:border-white/[0.08] px-4 pt-3 pb-4">
+        <footer className="shrink-0 bg-white/90 dark:bg-[#111110]/90 backdrop-blur-md border-t border-zinc-200 dark:border-white/[0.08] px-4 pt-3 pb-4" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
           <div className="max-w-3xl mx-auto space-y-2">
             {/* Pending attachments */}
             {pendingAttachments.length > 0 && (

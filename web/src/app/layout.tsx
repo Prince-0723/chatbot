@@ -1,10 +1,19 @@
 import type { Metadata } from "next";
+import type { Viewport } from "next";
 import "./globals.css";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "AI Chat",
   description: "ChatGPT-like UI backed by Groq streaming",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 const THEME_INIT_SCRIPT = `(() => {
@@ -31,8 +40,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full flex flex-col">
+    <html lang="en" className="h-full overflow-hidden antialiased" suppressHydrationWarning>
+      <body className="h-full overflow-hidden flex flex-col">
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <Providers>{children}</Providers>
       </body>
