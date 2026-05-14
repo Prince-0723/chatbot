@@ -559,11 +559,24 @@ Emoji policy:
   res.status(200);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Cache-Control", "no-store, no-cache");
-  res.setHeader("Transfer-Encoding", "chunked");
+  // Do NOT set Transfer-Encoding manually — Express v5 + Node handle chunked
+  // encoding automatically. Manual setting causes double-encoding with proxies.
   res.setHeader("X-Accel-Buffering", "no");
   if (chatDoc) res.setHeader("x-session-id", chatDoc._id.toString());
   if (sourcesUsed.length > 0) res.setHeader("x-rag-sources", JSON.stringify(sourcesUsed));
   res.flushHeaders();
+
+  // Helper: write chunk + wait for drain if socket is backed up (Express v5)
+  function writeChunk(chunk) {
+    return new Promise((resolve) => {
+      const ok = res.write(chunk, "utf8");
+      if (ok) {
+        resolve();
+      } else {
+        res.once("drain", resolve);
+      }
+    });
+  }
 
   // ── Stream ───────────────────────────────────────────────────────────────
   let assistantText = "";
@@ -578,7 +591,7 @@ Emoji policy:
       const delta = chunk?.choices?.[0]?.delta?.content ?? "";
       if (delta) {
         assistantText += delta;
-        res.write(delta);
+        await writeChunk(delta);
       }
     }
 
@@ -596,7 +609,7 @@ Emoji policy:
       await chatDoc.save();
     }
   } catch (err) {
-    res.write(`\n\n[Error] ${err?.message ?? String(err)}\n`);
+    await writeChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
   } finally {
     res.end();
   }

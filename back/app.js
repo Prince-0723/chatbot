@@ -236,11 +236,30 @@ async function startServer() {
       ];
     }
 
+    // ── Streaming response setup ─────────────────────────────────────────
+    // Do NOT manually set Transfer-Encoding — Express/Node manages chunked
+    // encoding automatically. Setting it explicitly causes double-encoding
+    // issues with Express v5 and some reverse proxies (Render, Vercel, etc).
     res.status(200);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-store, no-cache");
-    res.setHeader("Transfer-Encoding", "chunked");
-    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("X-Accel-Buffering", "no"); // disables Nginx proxy buffering
+
+    // Helper: write a chunk and wait for drain if the socket is backed up.
+    // This is required in Express v5 / Node streams to prevent dropped chunks.
+    function writeChunk(chunk) {
+      return new Promise((resolve) => {
+        const ok = res.write(chunk, "utf8");
+        if (ok) {
+          resolve();
+        } else {
+          // Buffer full — wait for drain before continuing
+          res.once("drain", resolve);
+        }
+      });
+    }
+
+    // Send headers immediately so the client sees the stream start
     res.flushHeaders();
 
     let assistantText = "";
@@ -254,7 +273,7 @@ async function startServer() {
         const delta = chunk?.choices?.[0]?.delta?.content ?? "";
         if (!delta) continue;
         assistantText += delta;
-        res.write(delta);
+        await writeChunk(delta);
       }
       if (authedUserId && chatDoc) {
         chatDoc.messages.push({ role: "assistant", content: assistantText, createdAt: new Date() });
@@ -262,7 +281,7 @@ async function startServer() {
         await chatDoc.save();
       }
     } catch (err) {
-      res.write(`\n\n[Error] ${err?.message ?? String(err)}\n`);
+      await writeChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
     } finally {
       res.end();
     }
