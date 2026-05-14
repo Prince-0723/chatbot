@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: chatbot
+    runtime: node
+    rootDir: back
+
+    buildCommand: |
+      apt-get update
+      apt-get install -y tesseract-ocr
+      npm install
+
+    startCommand: npm start
