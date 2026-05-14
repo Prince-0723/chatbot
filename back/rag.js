@@ -558,9 +558,12 @@ Emoji policy:
   // ── Response headers ─────────────────────────────────────────────────────
   res.status(200);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "no-store, no-cache");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("X-Accel-Buffering", "no");
   if (chatDoc) res.setHeader("x-session-id", chatDoc._id.toString());
   if (sourcesUsed.length > 0) res.setHeader("x-rag-sources", JSON.stringify(sourcesUsed));
+  res.flushHeaders();
 
   // ── Stream ───────────────────────────────────────────────────────────────
   let assistantText = "";

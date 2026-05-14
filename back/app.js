@@ -238,7 +238,10 @@ async function startServer() {
 
     res.status(200);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Cache-Control", "no-store, no-cache");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
 
     let assistantText = "";
     try {
