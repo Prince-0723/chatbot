@@ -393,6 +393,7 @@ export default function Home() {
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showLoginPopup, setShowLoginPopup] = useState(false);
 
   const sessionFileIds = useRef<string[]>([]);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -1279,17 +1280,21 @@ export default function Home() {
 
             {/* Input box */}
             <div className="relative flex items-end gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700/80 bg-white dark:bg-[#1e1e1d] shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/30 focus-within:border-indigo-400 dark:focus-within:border-indigo-500/60 transition-all px-3 py-2">
-              {isAuthed && (
-                <button
+              <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isStreaming}
+                  onClick={() => {
+                    if (!isAuthed) {
+                      setShowLoginPopup(true);
+                    } else {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  disabled={isAuthed && isStreaming}
                   className="shrink-0 mb-1 p-1.5 rounded-lg text-zinc-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all disabled:opacity-30"
-                  title="Attach a file (PDF, image, DOCX, TXT)"
+                  title={isAuthed ? "Attach a file (PDF, image, DOCX, TXT)" : "Login to attach files"}
                 >
                   <Paperclip size={18} />
                 </button>
-              )}
 
               <input
                 ref={fileInputRef}
@@ -1354,6 +1359,69 @@ export default function Home() {
           </div>
         </footer>
       </main>
+
+      {/* ── LOGIN POPUP ──────────────────────────────────────────────────── */}
+      {showLoginPopup && (
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setShowLoginPopup(false)}
+        >
+          <div
+            className="relative w-full max-w-sm mx-4 rounded-2xl bg-white dark:bg-[#1a1a19] border border-zinc-200 dark:border-white/10 shadow-2xl shadow-black/20 p-6 animate-in slide-in-from-bottom-4 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => setShowLoginPopup(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Icon */}
+            <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center mb-4">
+              <Paperclip size={22} className="text-indigo-500" />
+            </div>
+
+            {/* Text */}
+            <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+              Login required
+            </h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6 leading-relaxed">
+              For uploading a file you have to login to AI. Sign in with Google to attach and analyze files.
+            </p>
+
+            {/* Google Login */}
+            <div
+              className={[
+                "flex justify-center",
+                isAuthBusy ? "pointer-events-none opacity-60" : "",
+              ].join(" ")}
+            >
+              <GoogleLogin
+                onSuccess={async (resp) => {
+                  if (!resp.credential) { setError("Google login failed"); return; }
+                  try {
+                    await handleGoogleCredential(resp.credential);
+                    setShowLoginPopup(false);
+                  } catch (e: unknown) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  }
+                }}
+                onError={() => setError("Google login failed")}
+              />
+            </div>
+
+            {isAuthBusy && (
+              <div className="flex items-center justify-center gap-2 text-xs text-zinc-400 mt-3">
+                <Loader2 size={13} className="animate-spin" />
+                Signing in&hellip;
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
