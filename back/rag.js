@@ -577,15 +577,40 @@ Emoji policy:
   // ── Stream ───────────────────────────────────────────────────────────────
   let assistantText = "";
   try {
-    const stream = await getGroq().chat.completions.create({
-      model: GROQ_MODEL,
-      messages: groqMessages,
-      stream: true,
+    // Direct fetch — Groq SDK async iterator buffers tokens internally,
+    // causing paragraph-at-a-time delivery. Raw fetch gives per-token speed.
+    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: groqMessages,
+        stream: true,
+      }),
     });
 
-    for await (const chunk of stream) {
-      const delta = chunk?.choices?.[0]?.delta?.content ?? "";
-      if (delta) {
+    const reader = groqRes.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const raw = trimmed.slice(5).trim();
+        if (raw === "[DONE]") continue;
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { continue; }
+        const delta = parsed?.choices?.[0]?.delta?.content ?? "";
+        if (!delta) continue;
         assistantText += delta;
         await sendChunk(delta);
       }

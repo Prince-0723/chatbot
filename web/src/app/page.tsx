@@ -395,6 +395,17 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showLoginPopup, setShowLoginPopup] = useState(false);
 
+  // Custom confirm modal state — replaces all window.confirm() calls
+  const [confirmModal, setConfirmModal] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  /** Drop-in replacement for window.confirm() that shows a styled modal */
+  function appConfirm(message: string, onConfirm: () => void) {
+    setConfirmModal({ message, onConfirm });
+  }
+
   const sessionFileIds = useRef<string[]>([]);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -588,7 +599,7 @@ export default function Home() {
   // that were referenced in this session's messages.
   async function deleteSession(sessionId: string) {
     if (!isAuthed || isStreaming) return;
-    if (!window.confirm("Delete this chat?")) return;
+    appConfirm("Delete this chat?", async () => {
     setError(null);
     try {
       // 1. Load session messages to find any attached RAG file IDs
@@ -641,78 +652,75 @@ export default function Home() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }
-
-  // FIX 2: clearHistory — deletes all sessions AND all RAG files from all DBs
+    }); // end appConfirm
+  } 
   async function clearHistory() {
     if (!isAuthed || isStreaming) return;
-    if (!window.confirm("Clear all chat history? This will also remove all uploaded files.")) return;
-    setError(null);
-    try {
-      // 1. Bulk-delete ALL RAG files: Pinecone vectors + Cloudinary assets + MongoDB records
-      //    Uses DELETE /rag/files which handles everything server-side in one request.
+    appConfirm("Clear all chat history? This will also remove all uploaded files.", async () => {
+      setError(null);
       try {
-        await fetch(apiUrl("/rag/files"), {
+        // 1. Bulk-delete ALL RAG files: Pinecone vectors + Cloudinary assets + MongoDB records
+        //    Uses DELETE /rag/files which handles everything server-side in one request.
+        try {
+          await fetch(apiUrl("/rag/files"), {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+        } catch {}
+
+        // 2. Delete all chat sessions from MongoDB
+        await fetchJson(apiUrl("/sessions"), {
           method: "DELETE",
           headers: { Authorization: `Bearer ${authToken}` },
         });
-      } catch {}
 
-      // 2. Delete all chat sessions from MongoDB
-      await fetchJson(apiUrl("/sessions"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-
-      setMessages([]);
-      setActiveSessionId(null);
-      setSessions([]);
-      setRagFiles([]);
-      sessionFileIds.current = [];
-      await createSession();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+        setMessages([]);
+        setActiveSessionId(null);
+        setSessions([]);
+        setRagFiles([]);
+        sessionFileIds.current = [];
+        await createSession();
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    });
   }
 
   // ── Delete account ────────────────────────────────────────────────────────
   async function deleteAccount() {
     if (!isAuthed || isStreaming) return;
-    if (!window.confirm(
-      "Are you sure you want to delete your account?\n\n" +
-      "This will permanently delete:\n" +
-      "• All your chat history\n" +
-      "• All uploaded files (Cloudinary + Pinecone)\n" +
-      "• Your account from our database\n\n" +
-      "This action cannot be undone."
-    )) return;
-    setError(null);
-    try {
-      // 1. Delete all RAG files (Pinecone + Cloudinary + MongoDB RagFile records)
-      try {
-        await fetch(apiUrl("/rag/files"), {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${authToken}` },
-        });
-      } catch {}
-      // 2. Delete account (Chat sessions + User record from MongoDB)
-      await fetchJson(apiUrl("/account"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      // 3. Log out locally
-      setAuthToken(null);
-      setAuthUser(null);
-      setMessages([]);
-      setActiveSessionId(null);
-      setSessions([]);
-      setRagFiles([]);
-      sessionFileIds.current = [];
-      localStorage.removeItem(STORAGE_TOKEN_KEY);
-      localStorage.removeItem(STORAGE_USER_KEY);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    appConfirm(
+      "Are you sure you want to delete your account?\n\nThis will permanently delete:\n• All your chat history\n• All uploaded files (Cloudinary + Pinecone)\n• Your account from our database\n\nThis action cannot be undone.",
+      async () => {
+        setError(null);
+        try {
+          // 1. Delete all RAG files (Pinecone + Cloudinary + MongoDB RagFile records)
+          try {
+            await fetch(apiUrl("/rag/files"), {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${authToken}` },
+            });
+          } catch {}
+          // 2. Delete account (Chat sessions + User record from MongoDB)
+          await fetchJson(apiUrl("/account"), {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+          // 3. Log out locally
+          setAuthToken(null);
+          setAuthUser(null);
+          setMessages([]);
+          setActiveSessionId(null);
+          setSessions([]);
+          setRagFiles([]);
+          sessionFileIds.current = [];
+          localStorage.removeItem(STORAGE_TOKEN_KEY);
+          localStorage.removeItem(STORAGE_USER_KEY);
+        } catch (e: unknown) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      }
+    );
   }
 
   useEffect(() => {
@@ -1064,14 +1072,15 @@ export default function Home() {
                         </span>
                       </div>
                     </button>
-                    {s.title && s.title.trim() !== "" && (
-                      <button
-                        className="shrink-0 p-1.5 text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
+                    <button
+                        className="shrink-0 p-1.5 text-zinc-400 hover:text-red-500 
+                          opacity-100 md:opacity-0 md:group-hover:opacity-100 
+                          transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
                         onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                        title="Delete chat"
                       >
                         <Trash2 size={14} />
                       </button>
-                    )}
                   </div>
                 </li>
               ))}
@@ -1437,6 +1446,48 @@ export default function Home() {
                 Signing in&hellip;
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── CONFIRM MODAL ─────────────────────────────────────────────────── */}
+      {confirmModal && (
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setConfirmModal(null)}
+        >
+          <div
+            className="relative w-full max-w-sm mx-4 rounded-2xl bg-white dark:bg-[#1a1a19] border border-zinc-200 dark:border-white/10 shadow-2xl shadow-black/20 p-6 animate-in slide-in-from-bottom-4 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setConfirmModal(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+            <div className="w-12 h-12 rounded-xl bg-red-50 dark:bg-red-900/30 flex items-center justify-center mb-4">
+              <Trash2 size={22} className="text-red-500" />
+            </div>
+            <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-2">Are you sure?</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6 leading-relaxed whitespace-pre-line">
+              {confirmModal.message}
+            </p>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 rounded-xl border border-zinc-200 dark:border-white/10 px-4 py-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors"
+                onClick={() => setConfirmModal(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="flex-1 rounded-xl bg-red-500 hover:bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition-colors"
+                onClick={() => { confirmModal.onConfirm(); setConfirmModal(null); }}
+              >
+                Confirm
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -262,18 +262,47 @@ async function startServer() {
 
     let assistantText = "";
     try {
-      const groqStream = await groq.chat.completions.create({
-        model,
-        messages: sessionMessages.map((m) => ({ role: m.role, content: m.content })),
-        stream: true,
+      // Direct fetch instead of Groq SDK — the SDK's async iterator buffers
+      // multiple tokens before yielding, causing paragraph-at-a-time delivery.
+      // Raw fetch gives us each SSE line the moment Groq emits it.
+      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: sessionMessages.map((m) => ({ role: m.role, content: m.content })),
+          stream: true,
+        }),
       });
-      for await (const chunk of groqStream) {
-        const delta = chunk?.choices?.[0]?.delta?.content ?? "";
-        if (!delta) continue;
-        assistantText += delta;
-        await sendChunk(delta);
+
+      const reader = groqRes.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";          // keep incomplete last line
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const raw = trimmed.slice(5).trim();
+          if (raw === "[DONE]") continue;
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { continue; }
+          const delta = parsed?.choices?.[0]?.delta?.content ?? "";
+          if (!delta) continue;
+          assistantText += delta;
+          // Send EACH token immediately as its own SSE frame
+          await sendChunk(delta);
+        }
       }
-      // Signal end of stream
+
       res.write("data: [DONE]\n\n");
       if (authedUserId && chatDoc) {
         chatDoc.messages.push({ role: "assistant", content: assistantText, createdAt: new Date() });
