@@ -902,19 +902,37 @@ export default function Home() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantText = "";
+      let buffer = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        assistantText += decoder.decode(value, { stream: true });
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { ...last, content: assistantText, ragSources };
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are separated by "\n\n"
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? ""; // keep incomplete last frame
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data:")) continue;
+          const raw = line.slice(5).trim();
+          if (raw === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.t) {
+              assistantText += parsed.t;
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = { ...last, content: assistantText, ragSources };
+                }
+                return next;
+              });
+              scrollToBottom();
+            }
+          } catch {
+            // malformed frame — skip
           }
-          return next;
-        });
-        scrollToBottom();
+        }
       }
 
       if (isAuthed) await refreshSessions();

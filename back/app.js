@@ -236,30 +236,28 @@ async function startServer() {
       ];
     }
 
-    // ── Streaming response setup ─────────────────────────────────────────
-    // Do NOT manually set Transfer-Encoding — Express/Node manages chunked
-    // encoding automatically. Setting it explicitly causes double-encoding
-    // issues with Express v5 and some reverse proxies (Render, Vercel, etc).
+    // ── Streaming response — SSE format ──────────────────────────────────
+    // Using Server-Sent Events (text/event-stream) instead of plain text/plain
+    // because Render's reverse proxy buffers plain chunked responses regardless
+    // of X-Accel-Buffering. SSE is specifically designed for streaming and
+    // proxies/CDNs treat it correctly — they cannot buffer it.
     res.status(200);
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store, no-cache");
-    res.setHeader("X-Accel-Buffering", "no"); // disables Nginx proxy buffering
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
 
-    // Helper: write a chunk and wait for drain if the socket is backed up.
-    // This is required in Express v5 / Node streams to prevent dropped chunks.
-    function writeChunk(chunk) {
+    // Helper: send one SSE data frame + flush immediately
+    function sendChunk(text) {
       return new Promise((resolve) => {
-        const ok = res.write(chunk, "utf8");
-        if (ok) {
-          resolve();
-        } else {
-          // Buffer full — wait for drain before continuing
-          res.once("drain", resolve);
-        }
+        // SSE format: "data: <payload>\n\n"
+        // We JSON-encode the payload so newlines inside LLM text are safe
+        const ok = res.write(`data: ${JSON.stringify({ t: text })}\n\n`, "utf8");
+        if (ok) resolve();
+        else res.once("drain", resolve);
       });
     }
 
-    // Send headers immediately so the client sees the stream start
     res.flushHeaders();
 
     let assistantText = "";
@@ -273,15 +271,18 @@ async function startServer() {
         const delta = chunk?.choices?.[0]?.delta?.content ?? "";
         if (!delta) continue;
         assistantText += delta;
-        await writeChunk(delta);
+        await sendChunk(delta);
       }
+      // Signal end of stream
+      res.write("data: [DONE]\n\n");
       if (authedUserId && chatDoc) {
         chatDoc.messages.push({ role: "assistant", content: assistantText, createdAt: new Date() });
         if (!chatDoc.title) chatDoc.title = titleFromUserMessage(message);
         await chatDoc.save();
       }
     } catch (err) {
-      await writeChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
+      await sendChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
+      res.write("data: [DONE]\n\n");
     } finally {
       res.end();
     }

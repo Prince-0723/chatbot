@@ -555,26 +555,22 @@ Emoji policy:
       { role: "user", content: message },
     ];
 
-  // ── Response headers ─────────────────────────────────────────────────────
+  // ── Response headers — SSE format ────────────────────────────────────────
   res.status(200);
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-store, no-cache");
-  // Do NOT set Transfer-Encoding manually — Express v5 + Node handle chunked
-  // encoding automatically. Manual setting causes double-encoding with proxies.
+  res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   if (chatDoc) res.setHeader("x-session-id", chatDoc._id.toString());
   if (sourcesUsed.length > 0) res.setHeader("x-rag-sources", JSON.stringify(sourcesUsed));
   res.flushHeaders();
 
-  // Helper: write chunk + wait for drain if socket is backed up (Express v5)
-  function writeChunk(chunk) {
+  // Helper: send SSE data frame + flush (bypasses Render proxy buffering)
+  function sendChunk(text) {
     return new Promise((resolve) => {
-      const ok = res.write(chunk, "utf8");
-      if (ok) {
-        resolve();
-      } else {
-        res.once("drain", resolve);
-      }
+      const ok = res.write(`data: ${JSON.stringify({ t: text })}\n\n`, "utf8");
+      if (ok) resolve();
+      else res.once("drain", resolve);
     });
   }
 
@@ -591,9 +587,11 @@ Emoji policy:
       const delta = chunk?.choices?.[0]?.delta?.content ?? "";
       if (delta) {
         assistantText += delta;
-        await writeChunk(delta);
+        await sendChunk(delta);
       }
     }
+
+    res.write("data: [DONE]\n\n");
 
     if (chatDoc) {
       chatDoc.messages.push({
@@ -609,7 +607,7 @@ Emoji policy:
       await chatDoc.save();
     }
   } catch (err) {
-    await writeChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
+    await sendChunk(`\n\n[Error] ${err?.message ?? String(err)}\n`);
   } finally {
     res.end();
   }
