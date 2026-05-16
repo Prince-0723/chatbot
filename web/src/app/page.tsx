@@ -911,6 +911,36 @@ export default function Home() {
       const decoder = new TextDecoder();
       let assistantText = "";
       let buffer = "";
+
+      // Token queue + drainer — gives a natural word-by-word typing feel.
+      // Tokens arrive from the SSE stream and are queued; the drainer
+      // renders them one at a time with a small random delay so the output
+      // feels like it's being typed rather than dumped in chunks.
+      const tokenQueue: string[] = [];
+      let draining = false;
+
+      function drainQueue() {
+        if (draining) return;
+        draining = true;
+        function step() {
+          if (tokenQueue.length === 0) { draining = false; return; }
+          const token = tokenQueue.shift()!;
+          assistantText += token;
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = { ...last, content: assistantText, ragSources };
+            }
+            return next;
+          });
+          scrollToBottom();
+          // 15–35 ms random delay per token — smooth without feeling slow
+          setTimeout(step, 15 + Math.random() * 20);
+        }
+        step();
+      }
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -926,22 +956,23 @@ export default function Home() {
           try {
             const parsed = JSON.parse(raw);
             if (parsed.t) {
-              assistantText += parsed.t;
-              setMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") {
-                  next[next.length - 1] = { ...last, content: assistantText, ragSources };
-                }
-                return next;
-              });
-              scrollToBottom();
+              tokenQueue.push(parsed.t);
+              drainQueue();
             }
           } catch {
             // malformed frame — skip
           }
         }
       }
+
+      // Wait for drain to finish before marking streaming done
+      await new Promise<void>((resolve) => {
+        function waitForDrain() {
+          if (tokenQueue.length === 0 && !draining) { resolve(); return; }
+          setTimeout(waitForDrain, 30);
+        }
+        waitForDrain();
+      });
 
       if (isAuthed) await refreshSessions();
     } catch (e: unknown) {
@@ -1072,15 +1103,17 @@ export default function Home() {
                         </span>
                       </div>
                     </button>
+                    {s.title && s.title.trim() !== "" && (
                     <button
-                        className="shrink-0 p-1.5 text-zinc-400 hover:text-red-500 
-                          opacity-100 md:opacity-0 md:group-hover:opacity-100 
+                        className="shrink-0 p-1.5 text-zinc-400 hover:text-red-500
+                          opacity-100
                           transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
                         onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
                         title="Delete chat"
                       >
                         <Trash2 size={14} />
                       </button>
+                    )}
                   </div>
                 </li>
               ))}

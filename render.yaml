@@ -9,8 +9,4 @@ services:
       apt-get install -y tesseract-ocr
       npm install
 
-<<<<<<< HEAD
     startCommand: npm start
-=======
-    startCommand: npm start
->>>>>>> f70af694bca4ec0b45c033216036b3fc4584d1c2

@@ -64,24 +64,40 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
   });
 
   return new Promise((resolve, reject) => {
-    const isPdf = mimetype === "application/pdf";
     const isImg = mimetype.startsWith("image/");
-    const resourceType = isImg || isPdf ? "image" : "raw";
+    const isPdf = mimetype === "application/pdf";
+
+    // Everything uses "raw" — simple, reliable, no Cloudinary pipeline magic.
+    // PDFs served via raw URL + fl_attachment:false open inline in browser.
+    const resourceType = isImg ? "image" : "raw";
 
     const subfolder = isImg ? "images" : isPdf ? "pdfs" : "documents";
     const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
 
+    const uploadOptions = {
+      resource_type: resourceType,
+      folder: `chatbot-docs/${subfolder}`,
+      public_id: `${Date.now()}-${safeFilename}`,
+      overwrite: false,
+      invalidate: false,
+    };
+
     const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: resourceType,
-        folder: `chatbot-docs/${subfolder}`,
-        public_id: `${Date.now()}-${safeFilename}`,
-        overwrite: false,
-        invalidate: false,
-      },
+      uploadOptions,
       (error, result) => {
         if (error) return reject(error);
-        resolve({ url: result.secure_url, publicId: result.public_id });
+
+        let url = result.secure_url;
+
+        // For PDFs (raw resource): insert fl_attachment:false so the browser
+        // opens the file inline instead of downloading it.
+        // raw URL format: .../raw/upload/v123/folder/file.pdf
+        // becomes:        .../raw/upload/fl_attachment:false/v123/folder/file.pdf
+        if (isPdf && url.includes("/raw/upload/")) {
+          url = url.replace("/raw/upload/", "/raw/upload/fl_attachment:false/");
+        }
+
+        resolve({ url, publicId: result.public_id });
       }
     );
 
@@ -383,8 +399,7 @@ router.delete("/files", authenticate, async (req, res) => {
     const cloudinaryDeletes = files
       .filter((f) => f.cloudinaryPublicId)
       .map((f) => {
-        const isPdf = f.mimetype === "application/pdf";
-        const resourceType = f.mimetype.startsWith("image/") || isPdf ? "image" : "raw";
+        const resourceType = f.mimetype.startsWith("image/") ? "image" : "raw";
         return cloudinary.uploader
           .destroy(f.cloudinaryPublicId, { resource_type: resourceType })
           .catch((e) => console.warn("[Cloudinary bulk delete]", e.message));
@@ -426,8 +441,7 @@ router.delete("/files/:id", authenticate, async (req, res) => {
     }
 
     if (file.cloudinaryPublicId) {
-      const isPdf = file.mimetype === "application/pdf";
-      const resourceType = file.mimetype.startsWith("image/") || isPdf ? "image" : "raw";
+      const resourceType = file.mimetype.startsWith("image/") ? "image" : "raw";
       cloudinary.uploader
         .destroy(file.cloudinaryPublicId, { resource_type: resourceType })
         .catch((e) => console.warn("[Cloudinary delete]", e.message));
