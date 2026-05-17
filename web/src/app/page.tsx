@@ -218,9 +218,11 @@ function RagSourceBadge({
 // ── Attachment Card shown inside chat messages ────────────────────────────────
 function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
 
   const viewUrl = attachment.cloudinaryUrl || attachment.previewUrl || "";
   const canOpen = Boolean(viewUrl);
+  const isPdf = attachment.mimetype === "application/pdf";
 
   if (isImage(attachment.mimetype) && viewUrl) {
     return (
@@ -277,6 +279,76 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
     );
   }
 
+  // ── PDF inline viewer ──────────────────────────────────────────────────────
+  if (isPdf && viewUrl) {
+    return (
+      <>
+        <button
+          onClick={() => setPdfOpen(true)}
+          className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer"
+          title="Click to view PDF"
+        >
+          <div className="shrink-0 w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center">
+            <FileText size={16} className="text-red-300" />
+          </div>
+          <div className="min-w-0 flex-1 text-left">
+            <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
+            <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Click to view</div>
+          </div>
+          <ExternalLink size={13} className="shrink-0 text-white/50" />
+        </button>
+
+        {/* PDF Modal Viewer */}
+        {pdfOpen && (
+          <div
+            className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            onClick={() => setPdfOpen(false)}
+          >
+            <div
+              className="relative w-[92vw] h-[90vh] max-w-5xl bg-white dark:bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
+                <div className="flex items-center gap-2">
+                  <FileText size={16} className="text-red-500" />
+                  <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[60vw]">
+                    {attachment.filename}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={viewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-indigo-500 hover:text-indigo-400 px-2 py-1 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                    title="Open in new tab"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ExternalLink size={13} />
+                    Open in tab
+                  </a>
+                  <button
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+                    onClick={() => setPdfOpen(false)}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* PDF viewer — Google Docs Viewer avoids CORS/download issues with Cloudinary */}
+              <iframe
+                src={viewUrl}
+                className="flex-1 w-full border-0"
+                title={attachment.filename}
+              />
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
   return (
     <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
       <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
@@ -603,7 +675,7 @@ export default function Home() {
     setError(null);
     try {
       // 1. Load session messages to find any attached RAG file IDs
-      let ragFileIdsToDelete: string[] = [];
+      const ragFileIdsToDelete: string[] = [];
       try {
         const data = await fetchJson<{ session: Session }>(
           apiUrl(`/sessions/${sessionId}`),

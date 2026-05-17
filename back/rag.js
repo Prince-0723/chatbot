@@ -56,23 +56,20 @@ cloudinary.config({
 });
 
 async function uploadToCloudinary(buffer, mimetype, filename) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-
   return new Promise((resolve, reject) => {
     const isImg = mimetype.startsWith("image/");
     const isPdf = mimetype === "application/pdf";
 
-    // Everything uses "raw" — simple, reliable, no Cloudinary pipeline magic.
-    // PDFs served via raw URL + fl_attachment:false open inline in browser.
+    // Images → "image" resource_type
+    // PDFs + docs → "raw" resource_type (correct for non-image binary files)
     const resourceType = isImg ? "image" : "raw";
 
     const subfolder = isImg ? "images" : isPdf ? "pdfs" : "documents";
-    const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+    // Strip extension from public_id — Cloudinary adds it automatically from format
+    // Without this, filename.pdf becomes filename.pdf.pdf in the URL
+    const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+    const safeFilename = nameWithoutExt.replace(/[^a-zA-Z0-9_-]/g, "_");
 
     const uploadOptions = {
       resource_type: resourceType,
@@ -89,12 +86,10 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
 
         let url = result.secure_url;
 
-        // For PDFs (raw resource): insert fl_attachment:false so the browser
-        // opens the file inline instead of downloading it.
-        // raw URL format: .../raw/upload/v123/folder/file.pdf
-        // becomes:        .../raw/upload/fl_attachment:false/v123/folder/file.pdf
+        // For PDFs: insert fl_inline so browser opens PDF inline instead of downloading
+        // fl_inline works on raw resource_type unlike fl_attachment:false
         if (isPdf && url.includes("/raw/upload/")) {
-          url = url.replace("/raw/upload/", "/raw/upload/fl_attachment:false/");
+          url = url.replace("/raw/upload/", "/raw/upload/fl_inline/");
         }
 
         resolve({ url, publicId: result.public_id });
@@ -427,9 +422,8 @@ router.delete("/files/:id", authenticate, async (req, res) => {
   try {
     const index = getPinecone().index(PINECONE_INDEX);
     const namespace = `user-${userId}`;
+    // Delete by chunk IDs — works on all Pinecone plans (metadata filter needs paid plan)
     try {
-      await index.namespace(namespace).deleteMany({ fileId });
-    } catch {
       const toDelete = [];
       for (let i = 0; i < file.chunkCount; i++) toDelete.push(`${fileId}-chunk-${i}`);
       if (toDelete.length > 0) {
@@ -438,6 +432,8 @@ router.delete("/files/:id", authenticate, async (req, res) => {
           await index.namespace(namespace).deleteMany(toDelete.slice(i, i + batchSize));
         }
       }
+    } catch (pineconeErr) {
+      console.warn("[Pinecone delete warning]", pineconeErr?.message);
     }
 
     if (file.cloudinaryPublicId) {
