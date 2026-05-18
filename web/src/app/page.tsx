@@ -297,6 +297,29 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
       </a>
     );
   }
+  // ── DOCX / TXT / other — download link (Cloudinary inline open unreliable in prod) ──
+  if (canOpen) {
+    return (
+      <a
+        href={viewUrl}
+        download={attachment.filename}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
+        title="Download file"
+      >
+        <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
+          <FileText size={16} className="text-white/90" />
+        </div>
+        <div className="min-w-0 flex-1 text-left">
+          <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
+          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Download</div>
+        </div>
+        <ExternalLink size={13} className="shrink-0 text-white/50" />
+      </a>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
       <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
@@ -306,18 +329,6 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
         <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
         <div className="text-[10px] text-white/60">{formatBytes(attachment.size)}</div>
       </div>
-      {canOpen && (
-        <a
-          href={viewUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 p-1 rounded-md text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          title="Open file"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ExternalLink size={13} />
-        </a>
-      )}
     </div>
   );
 }
