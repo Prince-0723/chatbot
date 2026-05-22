@@ -132,16 +132,49 @@ const upload = multer({
       "text/plain",
       "application/pdf",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/msword",
+      // NOTE: application/msword (.doc legacy) is intentionally excluded — unsupported
       "image/jpeg",
       "image/png",
       "image/webp",
-      "image/gif",
     ];
     if (allowed.includes(file.mimetype)) cb(null, true);
     else cb(new Error(`Unsupported file type: ${file.mimetype}`));
   },
 });
+
+/**
+ * Count pages in a PDF buffer using pdf2json.
+ * Returns the number of pages, or throws on parse failure.
+ */
+async function getPdfPageCount(buffer) {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser(null, 1);
+    parser.on("pdfParser_dataReady", (data) => {
+      try {
+        const pages = data?.Pages?.length ?? 0;
+        resolve(pages);
+      } catch (e) {
+        reject(new Error("Could not determine PDF page count"));
+      }
+    });
+    parser.on("pdfParser_dataError", (err) => {
+      reject(new Error(err?.parserError ?? "PDF parse failed"));
+    });
+    parser.parseBuffer(buffer);
+  });
+}
+
+/**
+ * Count pages in a DOCX buffer using mammoth (counts page breaks + 1).
+ * This is a best-effort heuristic — DOCX has no strict page concept.
+ */
+async function getDocxPageCount(buffer) {
+  const result = await mammoth.extractRawText({ buffer });
+  const text = result.value || "";
+  // Count explicit page breaks (form feed character \f)
+  const pageBreaks = (text.match(/\f/g) || []).length;
+  return pageBreaks + 1;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -291,6 +324,35 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
 
   const userId = req.user.sub;
   const { originalname, mimetype, buffer, size } = req.file;
+
+  // ── Page count validation (max 2 pages for PDF and DOCX) ──────────────────
+  const MAX_PAGES = 2;
+  try {
+    if (mimetype === "application/pdf") {
+      const pageCount = await getPdfPageCount(buffer);
+      if (pageCount > MAX_PAGES) {
+        return res.status(422).json({
+          error: `You can upload maximum ${MAX_PAGES} pages`,
+          code: "PAGE_LIMIT_EXCEEDED",
+          pageCount,
+        });
+      }
+    } else if (
+      mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const pageCount = await getDocxPageCount(buffer);
+      if (pageCount > MAX_PAGES) {
+        return res.status(422).json({
+          error: `You can upload maximum ${MAX_PAGES} pages`,
+          code: "PAGE_LIMIT_EXCEEDED",
+          pageCount,
+        });
+      }
+    }
+  } catch (pageErr) {
+    // Non-fatal: if we can't count pages, proceed with upload
+    console.warn("[Page count check warning]", pageErr.message);
+  }
 
   try {
     let cloudinaryUrl = "";

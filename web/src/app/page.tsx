@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
+  ArrowDown,
   PanelLeftClose,
   Trash2,
   Menu,
@@ -187,29 +188,92 @@ function RagSourceBadge({
   ragFiles,
 }: {
   src: string;
-  ragFiles: Array<{ id: string; filename: string; cloudinaryUrl?: string }>;
+  ragFiles: Array<{ id: string; filename: string; cloudinaryUrl?: string; mimetype?: string }>;
 }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const match = ragFiles.find((f) => f.filename === src);
   const url = match?.cloudinaryUrl || null;
+  const mimetype = match?.mimetype || "";
+  const isImg = mimetype.startsWith("image/");
+
+  const badgeBase =
+    "inline-flex items-center gap-1 text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800/50 hover:border-indigo-300 transition-colors";
 
   if (url) {
+    // Images: badge click → lightbox (same behaviour as AttachmentCard)
+    if (isImg) {
+      return (
+        <>
+          <button
+            onClick={() => setLightboxOpen(true)}
+            title={`Preview ${src}`}
+            className={badgeBase}
+          >
+            {src}
+            <ExternalLink size={9} className="shrink-0 opacity-70" />
+          </button>
+
+          {lightboxOpen && (
+            <div
+              className="fixed inset-0 z-[999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+              onClick={() => setLightboxOpen(false)}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt={src}
+                className="max-w-[90vw] max-h-[90vh] rounded-2xl shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button
+                className="absolute top-4 right-4 text-white/70 hover:text-white"
+                onClick={() => setLightboxOpen(false)}
+                title="Close"
+              >
+                <X size={28} />
+              </button>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    // TXT: open in new tab (plain text renders fine in browser)
+    if (mimetype === "text/plain") {
+      return (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`View ${src}`}
+          className={badgeBase}
+        >
+          {src}
+          <ExternalLink size={9} className="shrink-0 opacity-70" />
+        </a>
+      );
+    }
+
+    // PDF / DOCX: force download (open-in-tab broken in prod)
     return (
       <a
         href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={`Open ${src}`}
-        className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800/50 hover:border-indigo-300 transition-colors"
+        download={src}
+        title={`Download ${src}`}
+        className={badgeBase}
       >
         {src}
-        <ExternalLink size={9} className="shrink-0 opacity-70" />
+        <ArrowDown size={9} className="shrink-0 opacity-70" />
       </a>
     );
   }
 
-  // No URL available — just a visual badge, no cursor pointer
+  // No URL — static badge
   return (
-    <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40">
+    <span
+      title={src}
+      className="inline-flex items-center gap-1 text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/40 cursor-default"
+    >
       {src}
     </span>
   );
@@ -221,6 +285,9 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
   const viewUrl = attachment.cloudinaryUrl || attachment.previewUrl || "";
   const canOpen = Boolean(viewUrl);
   const isPdf = attachment.mimetype === "application/pdf";
+  const isTxt = attachment.mimetype === "text/plain";
+
+  // ── Images: thumbnail → lightbox preview (no download, just view) ──────────
   if (isImage(attachment.mimetype) && viewUrl) {
     return (
       <>
@@ -228,7 +295,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
           onClick={() => setLightboxOpen(true)}
           className="block rounded-xl overflow-hidden border border-white/20 hover:opacity-90 transition-opacity cursor-zoom-in"
           style={{ maxWidth: 220 }}
-          title="Click to view image"
+          title="Click to preview image"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -257,69 +324,62 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
             <button
               className="absolute top-4 right-4 text-white/70 hover:text-white"
               onClick={() => setLightboxOpen(false)}
+              title="Close"
             >
               <X size={28} />
             </button>
-            <a
-              href={viewUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="absolute top-4 right-14 text-white/70 hover:text-white"
-              title="Open original"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ExternalLink size={24} />
-            </a>
           </div>
         )}
       </>
     );
   }
 
-  // ── PDF — click opens directly in new tab (works local + production) ─────────
-  if (isPdf && viewUrl) {
+  // ── TXT: open/view in new tab (plain text renders fine in all browsers/prod) ─
+  if (isTxt && canOpen) {
     return (
       <a
         href={viewUrl}
         target="_blank"
         rel="noopener noreferrer"
         className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
-        title="Click to open PDF"
+        title="View file"
       >
-        <div className="shrink-0 w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center">
-          <FileText size={16} className="text-red-300" />
+        <div className="shrink-0 w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+          <FileText size={16} className="text-emerald-300" />
         </div>
         <div className="min-w-0 flex-1 text-left">
           <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
-          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Opens in new tab</div>
-        </div>
-        <ExternalLink size={13} className="shrink-0 text-white/50" />
-      </a>
-    );
-  }
-  // ── DOCX / TXT / other — download link (Cloudinary inline open unreliable in prod) ──
-  if (canOpen) {
-    return (
-      <a
-        href={viewUrl}
-        download={attachment.filename}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
-        title="Download file"
-      >
-        <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
-          <FileText size={16} className="text-white/90" />
-        </div>
-        <div className="min-w-0 flex-1 text-left">
-          <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
-          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Download</div>
+          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · View</div>
         </div>
         <ExternalLink size={13} className="shrink-0 text-white/50" />
       </a>
     );
   }
 
+  // ── PDF / DOCX: direct download (open-in-tab broken in prod for these types) ─
+  if (canOpen) {
+    const accentClass = isPdf ? "bg-red-500/20" : "bg-indigo-500/20";
+    const iconClass   = isPdf ? "text-red-300"  : "text-indigo-300";
+    return (
+      <a
+        href={viewUrl}
+        download={attachment.filename}
+        className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
+        title="Download file"
+      >
+        <div className={`shrink-0 w-8 h-8 rounded-lg ${accentClass} flex items-center justify-center`}>
+          <FileText size={16} className={iconClass} />
+        </div>
+        <div className="min-w-0 flex-1 text-left">
+          <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
+          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Download</div>
+        </div>
+        <ArrowDown size={13} className="shrink-0 text-white/50" />
+      </a>
+    );
+  }
+
+  // ── Fallback: no URL available ─────────────────────────────────────────────
   return (
     <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
       <div className="shrink-0 w-8 h-8 rounded-lg bg-zinc-600/50 dark:bg-white/20 flex items-center justify-center">
@@ -414,7 +474,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   // FIX 3: track RAG files with their cloudinaryUrls for source linking
-  const [ragFiles, setRagFiles] = useState<Array<{ id: string; filename: string; cloudinaryUrl?: string }>>([]);
+  const [ragFiles, setRagFiles] = useState<Array<{ id: string; filename: string; cloudinaryUrl?: string; mimetype?: string }>>([]);
 
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -425,6 +485,32 @@ export default function Home() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showLoginPopup, setShowLoginPopup] = useState(false);
+
+  // File validation popups
+  const [fileValidationPopup, setFileValidationPopup] = useState<{
+    type: "unsupported" | "page_limit";
+    message: string;
+  } | null>(null);
+  const fileValidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const SUPPORTED_MIME_TYPES = useMemo(() => new Set([
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ]), []);
+
+  function showFilePopup(type: "unsupported" | "page_limit", message: string) {
+    if (fileValidationTimerRef.current) clearTimeout(fileValidationTimerRef.current);
+    setFileValidationPopup({ type, message });
+  }
+
+  function dismissFilePopup() {
+    if (fileValidationTimerRef.current) clearTimeout(fileValidationTimerRef.current);
+    setFileValidationPopup(null);
+  }
 
   // Custom confirm modal state — replaces all window.confirm() calls
   const [confirmModal, setConfirmModal] = useState<{
@@ -506,10 +592,11 @@ export default function Home() {
         if (!res.ok) return;
         const data = await res.json();
         setRagFiles(
-          (data.files || []).map((f: { id: string; filename: string; cloudinaryUrl?: string }) => ({
+          (data.files || []).map((f: { id: string; filename: string; cloudinaryUrl?: string; mimetype?: string }) => ({
             id: f.id,
             filename: f.filename,
             cloudinaryUrl: f.cloudinaryUrl || "",
+            mimetype: f.mimetype || "",
           }))
         );
       } catch {}
@@ -770,10 +857,19 @@ export default function Home() {
   }, [sessions, activeSessionId, backendBase, isAuthed]);
 
   // ── File upload ───────────────────────────────────────────────────────────
-  async function handleFilesSelected(fileList: FileList | null) {
+  async function handleFilesSelected(fileList: FileList | File[] | null) {
     if (!fileList || fileList.length === 0 || !isAuthed) return;
 
-    const newPending: PendingAttachment[] = Array.from(fileList).map((file) => ({
+    const files = Array.from(fileList);
+
+    // ── Client-side file type validation ────────────────────────────────────
+    const unsupportedFiles = files.filter((f) => !SUPPORTED_MIME_TYPES.has(f.type));
+    if (unsupportedFiles.length > 0) {
+      showFilePopup("unsupported", "This document is not supported");
+      return;
+    }
+
+    const newPending: PendingAttachment[] = files.map((file) => ({
       tempId: `temp-${Date.now()}-${Math.random()}`,
       file,
       previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
@@ -794,10 +890,18 @@ export default function Home() {
         });
 
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Upload failed" }));
+          const errData = await res.json().catch(() => ({ error: "Upload failed" }));
+
+          // Show page-limit popup and remove the pending card
+          if (errData.code === "PAGE_LIMIT_EXCEEDED") {
+            showFilePopup("page_limit", "You can upload maximum 2 pages");
+            setPendingAttachments((prev) => prev.filter((p) => p.tempId !== pending.tempId));
+            continue;
+          }
+
           setPendingAttachments((prev) =>
             prev.map((p) =>
-              p.tempId === pending.tempId ? { ...p, status: "error", error: err.error } : p
+              p.tempId === pending.tempId ? { ...p, status: "error", error: errData.error } : p
             )
           );
           continue;
@@ -810,12 +914,12 @@ export default function Home() {
           resolvedUrl = URL.createObjectURL(pending.file);
         }
 
-        // FIX 3: add newly uploaded file to ragFiles for source linking
+        // add newly uploaded file to ragFiles for source linking
         if (data.fileId) {
           setRagFiles((prev) => {
             if (prev.find((f) => f.id === data.fileId)) return prev;
             return [
-              { id: data.fileId, filename: pending.file.name, cloudinaryUrl: resolvedUrl },
+              { id: data.fileId, filename: pending.file.name, cloudinaryUrl: resolvedUrl, mimetype: pending.file.type },
               ...prev,
             ];
           });
@@ -840,13 +944,54 @@ export default function Home() {
     }
   }
 
-  function removePending(tempId: string) {
-    setPendingAttachments((prev) => {
-      const found = prev.find((p) => p.tempId === tempId);
-      if (found?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(found.previewUrl);
-      if (found?.cloudinaryUrl?.startsWith("blob:")) URL.revokeObjectURL(found.cloudinaryUrl);
-      return prev.filter((p) => p.tempId !== tempId);
-    });
+  // ── Paste support — handle files pasted into the chat input ───────────────
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const fileItems = items.filter((item) => item.kind === "file");
+    if (fileItems.length === 0) return; // no files — let normal text paste happen
+
+    e.preventDefault();
+    if (!isAuthed) {
+      setShowLoginPopup(true);
+      return;
+    }
+
+    const pastedFiles: File[] = fileItems
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+
+    if (pastedFiles.length > 0) {
+      handleFilesSelected(pastedFiles);
+    }
+  }
+
+  // ── Delete attachment (UI + Cloudinary + MongoDB) ─────────────────────────
+  async function removePending(tempId: string) {
+    const found = pendingAttachments.find((p) => p.tempId === tempId);
+    if (!found) return;
+
+    // Revoke any blob URLs to free memory
+    if (found.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(found.previewUrl);
+    if (found.cloudinaryUrl?.startsWith("blob:")) URL.revokeObjectURL(found.cloudinaryUrl);
+
+    // Remove from UI immediately
+    setPendingAttachments((prev) => prev.filter((p) => p.tempId !== tempId));
+
+    // If the file was successfully uploaded, delete it from Cloudinary + MongoDB
+    if (found.fileId && isAuthed) {
+      try {
+        await fetch(apiUrl(`/rag/files/${found.fileId}`), {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        // Remove from sessionFileIds so it's no longer in context
+        sessionFileIds.current = sessionFileIds.current.filter((id) => id !== found.fileId);
+        // Remove from ragFiles list
+        setRagFiles((prev) => prev.filter((f) => f.id !== found.fileId));
+      } catch {
+        // Non-fatal — UI already updated
+      }
+    }
   }
 
   // ── Send message ──────────────────────────────────────────────────────────
@@ -1371,7 +1516,9 @@ export default function Home() {
 
             {/* Input box */}
             <div className="relative flex items-end gap-2 rounded-2xl border border-zinc-300 dark:border-zinc-700/80 bg-white dark:bg-[#1e1e1d] shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/30 focus-within:border-indigo-400 dark:focus-within:border-indigo-500/60 transition-all px-3 py-2">
-              <button
+              {/* Attachment button + validation popup */}
+              <div className="relative shrink-0 mb-1">
+                <button
                   type="button"
                   onClick={() => {
                     if (!isAuthed) {
@@ -1381,16 +1528,45 @@ export default function Home() {
                     }
                   }}
                   disabled={isAuthed && isStreaming}
-                  className="shrink-0 mb-1 p-1.5 rounded-lg text-zinc-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all disabled:opacity-30"
-                  title={isAuthed ? "Attach a file (PDF, image, DOCX, TXT)" : "Login to attach files"}
+                  className="p-1.5 rounded-lg text-zinc-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all disabled:opacity-30"
+                  title={isAuthed ? "Attach a file (PDF, DOCX, TXT, JPG, PNG, WEBP)" : "Login to attach files"}
                 >
                   <Paperclip size={18} />
                 </button>
 
+                {/* File validation popup — anchored to the paperclip button */}
+                {fileValidationPopup && (
+                  <div className="absolute bottom-full left-0 mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                    <div className={[
+                      "flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium shadow-lg border whitespace-nowrap",
+                      fileValidationPopup.type === "unsupported"
+                        ? "bg-red-50 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-700/50"
+                        : "bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700/50",
+                    ].join(" ")}>
+                      <span>{fileValidationPopup.message}</span>
+                      <button
+                        onClick={dismissFilePopup}
+                        className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
+                        aria-label="Dismiss"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    {/* Arrow pointer */}
+                    <div className={[
+                      "w-2.5 h-2.5 rotate-45 -mt-[5px] ml-3 border-b border-r",
+                      fileValidationPopup.type === "unsupported"
+                        ? "bg-red-50 dark:bg-red-900/40 border-red-200 dark:border-red-700/50"
+                        : "bg-amber-50 dark:bg-amber-900/40 border-amber-200 dark:border-amber-700/50",
+                    ].join(" ")} />
+                  </div>
+                )}
+              </div>
+
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.gif"
+                accept=".txt,.pdf,.docx,.jpg,.jpeg,.png,.webp"
                 multiple
                 className="hidden"
                 onChange={(e) => handleFilesSelected(e.target.files)}
@@ -1415,6 +1591,7 @@ export default function Home() {
                     sendMessage();
                   }
                 }}
+                onPaste={handlePaste}
               />
 
               <button
