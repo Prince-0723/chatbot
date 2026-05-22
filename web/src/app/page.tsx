@@ -334,13 +334,11 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
     );
   }
 
-  // ── TXT: open/view in new tab — strip fl_attachment so Cloudinary serves inline ─
+  // ── TXT: open/view in new tab (plain text renders fine in all browsers/prod) ─
   if (isTxt && canOpen) {
-    // Cloudinary appends fl_attachment which forces download; remove it so browser views inline
-    const txtViewUrl = viewUrl.replace(/\/fl_attachment[^/]*/g, "");
     return (
       <a
-        href={txtViewUrl}
+        href={viewUrl}
         target="_blank"
         rel="noopener noreferrer"
         className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
@@ -358,20 +356,26 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
     );
   }
 
-  // ── PDF / DOCX: static card — no download, no open (broken in prod) ──────────
+  // ── PDF / DOCX: direct download (open-in-tab broken in prod for these types) ─
   if (canOpen) {
     const accentClass = isPdf ? "bg-red-500/20" : "bg-indigo-500/20";
     const iconClass   = isPdf ? "text-red-300"  : "text-indigo-300";
     return (
-      <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
+      <a
+        href={viewUrl}
+        download={attachment.filename}
+        className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
+        title="Download file"
+      >
         <div className={`shrink-0 w-8 h-8 rounded-lg ${accentClass} flex items-center justify-center`}>
           <FileText size={16} className={iconClass} />
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 text-left">
           <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
-          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)}</div>
+          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Download</div>
         </div>
-      </div>
+        <ArrowDown size={13} className="shrink-0 text-white/50" />
+      </a>
     );
   }
 
