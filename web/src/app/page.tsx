@@ -900,8 +900,11 @@ export default function Home() {
           const errData = await res.json().catch(() => ({ error: "Upload failed" }));
 
           // Show page-limit popup and remove the pending card
-          if (errData.code === "PAGE_LIMIT_EXCEEDED") {
-            showFilePopup("page_limit", "You can upload maximum 2 pages");
+          if (errData.code === "PAGE_LIMIT_EXCEEDED" || errData.code === "PAGE_COUNT_FAILED") {
+            const msg = errData.code === "PAGE_LIMIT_EXCEEDED"
+              ? "You can upload maximum 2 pages"
+              : "Could not validate document. Please try a different file.";
+            showFilePopup("page_limit", msg);
             setPendingAttachments((prev) => prev.filter((p) => p.tempId !== pending.tempId));
             if (fileInputRef.current) fileInputRef.current.value = "";
             continue;

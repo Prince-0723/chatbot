@@ -22,26 +22,14 @@ import { RagFile } from "./models/RagFile.js";
 import { Chat } from "./models/Chat.js";
 
 // ─────────────────────────────────────────────────────────────
-// pdf2json — pure JS, no workers, no CJS/ESM issues
+// pdf-parse — reliable PDF text + page count extraction
 // ─────────────────────────────────────────────────────────────
 const require = createRequire(import.meta.url);
-const PDFParser = require("pdf2json");
+const pdfParse = require("pdf-parse");
 
 async function extractPdfText(buffer) {
-  return new Promise((resolve, reject) => {
-    const parser = new PDFParser(null, 1);
-    parser.on("pdfParser_dataReady", () => {
-      try {
-        resolve(parser.getRawTextContent());
-      } catch (e) {
-        reject(new Error("PDF text extraction failed: " + e.message));
-      }
-    });
-    parser.on("pdfParser_dataError", (err) => {
-      reject(new Error(err?.parserError ?? "PDF parse failed"));
-    });
-    parser.parseBuffer(buffer);
-  });
+  const data = await pdfParse(buffer);
+  return data.text;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -143,25 +131,12 @@ const upload = multer({
 });
 
 /**
- * Count pages in a PDF buffer using pdf2json.
+ * Count pages in a PDF buffer using pdf-parse.
  * Returns the number of pages, or throws on parse failure.
  */
 async function getPdfPageCount(buffer) {
-  return new Promise((resolve, reject) => {
-    const parser = new PDFParser(null, 1);
-    parser.on("pdfParser_dataReady", (data) => {
-      try {
-        const pages = data?.Pages?.length ?? 0;
-        resolve(pages);
-      } catch (e) {
-        reject(new Error("Could not determine PDF page count"));
-      }
-    });
-    parser.on("pdfParser_dataError", (err) => {
-      reject(new Error(err?.parserError ?? "PDF parse failed"));
-    });
-    parser.parseBuffer(buffer);
-  });
+  const data = await pdfParse(buffer);
+  return data.numpages;
 }
 
 /**
@@ -350,8 +325,11 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
       }
     }
   } catch (pageErr) {
-    // Non-fatal: if we can't count pages, proceed with upload
-    console.warn("[Page count check warning]", pageErr.message);
+    console.error("[Page count check failed]", pageErr.message);
+    return res.status(422).json({
+      error: "Could not validate document. Please try a different file.",
+      code: "PAGE_COUNT_FAILED",
+    });
   }
 
   try {
