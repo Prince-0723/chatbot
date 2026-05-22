@@ -18,6 +18,8 @@ import {
   MessageSquare,
   ExternalLink,
   MoreVertical,
+  AlertTriangle,
+  AlertCircle,
 } from "lucide-react";
 import { GoogleLogin } from "@react-oauth/google";
 import ReactMarkdown from "react-markdown";
@@ -505,6 +507,10 @@ export default function Home() {
   function showFilePopup(type: "unsupported" | "page_limit", message: string) {
     if (fileValidationTimerRef.current) clearTimeout(fileValidationTimerRef.current);
     setFileValidationPopup({ type, message });
+    // Auto-dismiss after 6 seconds
+    fileValidationTimerRef.current = setTimeout(() => {
+      setFileValidationPopup(null);
+    }, 6000);
   }
 
   function dismissFilePopup() {
@@ -866,6 +872,7 @@ export default function Home() {
     const unsupportedFiles = files.filter((f) => !SUPPORTED_MIME_TYPES.has(f.type));
     if (unsupportedFiles.length > 0) {
       showFilePopup("unsupported", "This document is not supported");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
@@ -896,6 +903,7 @@ export default function Home() {
           if (errData.code === "PAGE_LIMIT_EXCEEDED") {
             showFilePopup("page_limit", "You can upload maximum 2 pages");
             setPendingAttachments((prev) => prev.filter((p) => p.tempId !== pending.tempId));
+            if (fileInputRef.current) fileInputRef.current.value = "";
             continue;
           }
 
@@ -1534,33 +1542,7 @@ export default function Home() {
                   <Paperclip size={18} />
                 </button>
 
-                {/* File validation popup — anchored to the paperclip button */}
-                {fileValidationPopup && (
-                  <div className="absolute bottom-full left-0 mb-2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                    <div className={[
-                      "flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium shadow-lg border whitespace-nowrap",
-                      fileValidationPopup.type === "unsupported"
-                        ? "bg-red-50 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-700/50"
-                        : "bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700/50",
-                    ].join(" ")}>
-                      <span>{fileValidationPopup.message}</span>
-                      <button
-                        onClick={dismissFilePopup}
-                        className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
-                        aria-label="Dismiss"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                    {/* Arrow pointer */}
-                    <div className={[
-                      "w-2.5 h-2.5 rotate-45 -mt-[5px] ml-3 border-b border-r",
-                      fileValidationPopup.type === "unsupported"
-                        ? "bg-red-50 dark:bg-red-900/40 border-red-200 dark:border-red-700/50"
-                        : "bg-amber-50 dark:bg-amber-900/40 border-amber-200 dark:border-amber-700/50",
-                    ].join(" ")} />
-                  </div>
-                )}
+                {/* File validation warning — rendered as a fixed modal overlay via portal-like pattern */}
               </div>
 
               <input
@@ -1692,6 +1674,76 @@ export default function Home() {
       )}
 
       {/* ── CONFIRM MODAL ─────────────────────────────────────────────────── */}
+      {/* ── File Validation Warning Modal ─────────────────────────────────────── */}
+      {fileValidationPopup && (
+        <div
+          className="fixed inset-0 z-[998] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={dismissFilePopup}
+        >
+          <div
+            className={[
+              "relative w-full max-w-sm mx-4 rounded-2xl border shadow-2xl shadow-black/20 p-6 animate-in slide-in-from-bottom-4 zoom-in-95 duration-200",
+              fileValidationPopup.type === "unsupported"
+                ? "bg-white dark:bg-[#1a1a19] border-red-200 dark:border-red-700/40"
+                : "bg-white dark:bg-[#1a1a19] border-amber-200 dark:border-amber-700/40",
+            ].join(" ")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              onClick={dismissFilePopup}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Icon */}
+            <div className={[
+              "w-12 h-12 rounded-xl flex items-center justify-center mb-4",
+              fileValidationPopup.type === "unsupported"
+                ? "bg-red-50 dark:bg-red-900/30"
+                : "bg-amber-50 dark:bg-amber-900/30",
+            ].join(" ")}>
+              {fileValidationPopup.type === "unsupported"
+                ? <AlertCircle size={24} className="text-red-500" />
+                : <AlertTriangle size={24} className="text-amber-500" />
+              }
+            </div>
+
+            {/* Title */}
+            <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+              {fileValidationPopup.type === "unsupported" ? "Unsupported File Type" : "Page Limit Exceeded"}
+            </h3>
+
+            {/* Message */}
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2 leading-relaxed">
+              {fileValidationPopup.message}
+            </p>
+
+            {/* Helper text */}
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-6 leading-relaxed">
+              {fileValidationPopup.type === "unsupported"
+                ? "Supported formats: PDF, DOCX, TXT, JPG, PNG, WEBP"
+                : "Please upload a document with 2 pages or fewer."}
+            </p>
+
+            {/* Dismiss button */}
+            <button
+              onClick={dismissFilePopup}
+              className={[
+                "w-full rounded-xl px-4 py-2.5 text-sm font-medium text-white transition-colors",
+                fileValidationPopup.type === "unsupported"
+                  ? "bg-red-500 hover:bg-red-600"
+                  : "bg-amber-500 hover:bg-amber-600",
+              ].join(" ")}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
       {confirmModal && (
         <div
           className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
