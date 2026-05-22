@@ -61,11 +61,13 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
     const isPdf = mimetype === "application/pdf";
 
     // Images → "image" resource_type
-    // PDFs → "image" resource_type (Cloudinary serves PDFs inline this way — works on all plans)
-    // Docs (docx etc.) → "raw" resource_type
+    // PDFs → "image" resource_type (Cloudinary serves PDFs inline this way)
+    // TXT  → "raw" resource_type with explicit inline flag
+    // DOCX → "raw" resource_type
+    const isTxt = mimetype === "text/plain";
     const resourceType = isImg || isPdf ? "image" : "raw";
 
-    const subfolder = isImg ? "images" : isPdf ? "pdfs" : "documents";
+    const subfolder = isImg ? "images" : isPdf ? "pdfs" : isTxt ? "texts" : "documents";
 
     // Strip extension from public_id — Cloudinary adds it automatically from format
     // Without this, filename.pdf becomes filename.pdf.pdf in the URL
@@ -78,8 +80,9 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
       public_id: `${Date.now()}-${safeFilename}`,
       overwrite: false,
       invalidate: false,
-      // For PDFs uploaded as "image" type, Cloudinary serves them inline by default
       format: isPdf ? "pdf" : undefined,
+      // TXT: tell Cloudinary to serve inline (not as attachment download)
+      ...(isTxt && { type: "upload", flags: "attachment:false" }),
     };
 
     const stream = cloudinary.uploader.upload_stream(
