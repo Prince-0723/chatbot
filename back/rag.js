@@ -22,29 +22,17 @@ import { RagFile } from "./models/RagFile.js";
 import { Chat } from "./models/Chat.js";
 
 // ─────────────────────────────────────────────────────────────
-// pdf2json — production-safe PDF text + page count extraction
-// (pdf-parse reads test fixtures on require() which fail in
-//  production builds where node_modules are pruned)
+// pdf-parse (via direct lib import) — production-safe fix
+// Importing pdf-parse/lib/pdf-parse.js directly bypasses the
+// test-file auto-load in index.js that crashes in production
+// builds where node_modules test folders are pruned.
 // ─────────────────────────────────────────────────────────────
 const require = createRequire(import.meta.url);
-const PDFParser = require("pdf2json");
-
-function parsePdf(buffer) {
-  return new Promise((resolve, reject) => {
-    const parser = new PDFParser(null, true);
-    parser.on("pdfParser_dataReady", (data) => resolve(data));
-    parser.on("pdfParser_dataError", (err) => reject(err.parserError ?? err));
-    parser.parseBuffer(buffer);
-  });
-}
+const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 
 async function extractPdfText(buffer) {
-  const data = await parsePdf(buffer);
-  const text = (data.Pages || [])
-    .flatMap((page) => page.Texts || [])
-    .map((t) => decodeURIComponent(t.R?.[0]?.T ?? ""))
-    .join(" ");
-  return text;
+  const data = await pdfParse(buffer);
+  return data.text;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -146,11 +134,11 @@ const upload = multer({
 });
 
 /**
- * Count pages in a PDF buffer using pdf2json (production-safe).
+ * Count pages in a PDF buffer.
  */
 async function getPdfPageCount(buffer) {
-  const data = await parsePdf(buffer);
-  return (data.Pages || []).length;
+  const data = await pdfParse(buffer);
+  return data.numpages;
 }
 
 /**
@@ -212,7 +200,6 @@ async function extractText(buffer, mimetype) {
   if (mimetype === "text/plain") return buffer.toString("utf8");
 
   if (mimetype === "application/pdf") {
-    // ✅ pdf2json — pure JS, no worker, works on all Node versions
     return await extractPdfText(buffer);
   }
 
