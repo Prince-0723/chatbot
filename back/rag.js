@@ -22,14 +22,29 @@ import { RagFile } from "./models/RagFile.js";
 import { Chat } from "./models/Chat.js";
 
 // ─────────────────────────────────────────────────────────────
-// pdf-parse — reliable PDF text + page count extraction
+// pdf2json — production-safe PDF text + page count extraction
+// (pdf-parse reads test fixtures on require() which fail in
+//  production builds where node_modules are pruned)
 // ─────────────────────────────────────────────────────────────
 const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
+const PDFParser = require("pdf2json");
+
+function parsePdf(buffer) {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser(null, true);
+    parser.on("pdfParser_dataReady", (data) => resolve(data));
+    parser.on("pdfParser_dataError", (err) => reject(err.parserError ?? err));
+    parser.parseBuffer(buffer);
+  });
+}
 
 async function extractPdfText(buffer) {
-  const data = await pdfParse(buffer);
-  return data.text;
+  const data = await parsePdf(buffer);
+  const text = (data.Pages || [])
+    .flatMap((page) => page.Texts || [])
+    .map((t) => decodeURIComponent(t.R?.[0]?.T ?? ""))
+    .join(" ");
+  return text;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -131,12 +146,11 @@ const upload = multer({
 });
 
 /**
- * Count pages in a PDF buffer using pdf-parse.
- * Returns the number of pages, or throws on parse failure.
+ * Count pages in a PDF buffer using pdf2json (production-safe).
  */
 async function getPdfPageCount(buffer) {
-  const data = await pdfParse(buffer);
-  return data.numpages;
+  const data = await parsePdf(buffer);
+  return (data.Pages || []).length;
 }
 
 /**
@@ -325,11 +339,10 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
       }
     }
   } catch (pageErr) {
-    console.error("[Page count check failed]", pageErr.message);
-    return res.status(422).json({
-      error: "Could not validate document. Please try a different file.",
-      code: "PAGE_COUNT_FAILED",
-    });
+    // Page count check failed — this is non-fatal.
+    // We only block uploads when we can CONFIRM the page limit is exceeded.
+    // If the check itself errors (e.g. pdf-parse issue), allow the upload to continue.
+    console.warn("[Page count check skipped]", pageErr.message);
   }
 
   try {
