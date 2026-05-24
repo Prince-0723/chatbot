@@ -472,7 +472,14 @@ export default function Home() {
   const isAuthed = Boolean(authToken && authUser);
 
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false); // FIX 3: track if sessions have been fetched
+  // FIX 3: Restore active session from localStorage on page refresh
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("activeSessionId") || null;
+    }
+    return null;
+  });
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   // FIX 3: track RAG files with their cloudinaryUrls for source linking
@@ -614,10 +621,12 @@ export default function Home() {
     try {
       localStorage.removeItem(STORAGE_TOKEN_KEY);
       localStorage.removeItem(STORAGE_USER_KEY);
+      localStorage.removeItem("activeSessionId");
     } catch {}
     setAuthToken(null);
     setAuthUser(null);
     setSessions([]);
+    setSessionsLoaded(false); // FIX 3: reset so next login re-fetches properly
     setActiveSessionId(null);
     setMessages([]);
     setError(null);
@@ -637,15 +646,17 @@ export default function Home() {
   const refreshSessions = useCallback(
     async (tokenOverride?: string) => {
       const token = tokenOverride ?? authToken;
-      if (!token) { setSessions([]); return []; }
+      if (!token) { setSessions([]); setSessionsLoaded(true); return []; }
       try {
         const data = await fetchJson<{ sessions: SessionMeta[] }>(
           apiUrl("/sessions"),
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setSessions(data.sessions);
+        setSessionsLoaded(true);
         return data.sessions;
       } catch {
+        setSessionsLoaded(true);
         return [];
       }
     },
@@ -677,11 +688,14 @@ export default function Home() {
     [apiUrl, refreshSessions, refreshRagFiles]
   );
 
-  async function openSession(sessionId: string) {
+  const initialLoadDone = useRef(false);
+
+  async function openSession(sessionId: string, force = false) {
     if (!isAuthed) return;
-    if (sessionId === activeSessionId) return;
+    if (sessionId === activeSessionId && messages.length > 0 && !force) return;
     setError(null);
     setActiveSessionId(sessionId);
+    localStorage.setItem("activeSessionId", sessionId); // save explicitly here only
     sessionFileIds.current = [];
     const data = await fetchJson<{ session: Session }>(
       apiUrl(`/sessions/${sessionId}`),
@@ -707,6 +721,7 @@ export default function Home() {
       });
       await refreshSessions();
       setActiveSessionId(data.sessionId);
+      localStorage.setItem("activeSessionId", data.sessionId); // save explicitly
       sessionFileIds.current = [];
       if (resetMessages) setMessages([]);
       setIsSidebarOpen(false);
@@ -849,18 +864,30 @@ export default function Home() {
 
   useEffect(() => {
     if (!backendBase) { setError("Missing NEXT_PUBLIC_BACKEND_URL."); return; }
-    if (!isAuthed) { setSessions([]); setActiveSessionId(null); return; }
+    if (!isAuthed) { setSessions([]); setSessionsLoaded(false); return; } // FIX: don't null activeSessionId here
     refreshSessions().catch((e) => setError(e.message));
     refreshRagFiles().catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backendBase, isAuthed]);
 
   useEffect(() => {
-    if (!isAuthed) return;
-    if (sessions.length > 0 && !activeSessionId) openSession(sessions[0].id);
-    else if (sessions.length === 0 && !activeSessionId && backendBase) createSession();
+    if (!isAuthed || !sessionsLoaded) return;
+    if (sessions.length > 0) {
+      if (activeSessionId) {
+        const exists = sessions.find((s) => s.id === activeSessionId);
+        if (exists) {
+          openSession(activeSessionId, true); // force=true: always load messages on refresh
+        } else {
+          openSession(sessions[0].id, true);
+        }
+      } else {
+        openSession(sessions[0].id, true);
+      }
+    } else {
+      createSession();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions, activeSessionId, backendBase, isAuthed]);
+  }, [sessionsLoaded, isAuthed]);
 
   // ── File upload ───────────────────────────────────────────────────────────
   async function handleFilesSelected(fileList: FileList | File[] | null) {

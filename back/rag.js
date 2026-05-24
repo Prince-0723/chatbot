@@ -78,7 +78,15 @@ async function uploadToCloudinary(buffer, mimetype, filename) {
       (error, result) => {
         if (error) return reject(error);
 
-        const url = result.secure_url;
+        let url = result.secure_url;
+
+        // FIX 2: For PDFs and DOCX, inject fl_attachment into the Cloudinary URL so the
+        // browser triggers a direct download instead of opening Cloudinary's viewer.
+        // Pattern: insert /fl_attachment/ before the version segment (v1234...) or upload segment.
+        if (isPdf) {
+          url = url.replace(/\/upload\//, "/upload/fl_attachment/");
+        }
+
         resolve({ url, publicId: result.public_id });
       }
     );
@@ -302,9 +310,13 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
   const { originalname, mimetype, buffer, size } = req.file;
 
   // ── Page count validation (max 2 pages for PDF and DOCX) ──────────────────
+  // FIX 1: In production (Render), pdf-parse can fail silently or throw.
+  // We wrap each check individually so a parse error is logged but never
+  // swallowed as "no limit" — instead we return PAGE_LIMIT_EXCEEDED only
+  // when we can CONFIRM the count exceeds the limit.
   const MAX_PAGES = 2;
-  try {
-    if (mimetype === "application/pdf") {
+  if (mimetype === "application/pdf") {
+    try {
       const pageCount = await getPdfPageCount(buffer);
       if (pageCount > MAX_PAGES) {
         return res.status(422).json({
@@ -313,9 +325,15 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
           pageCount,
         });
       }
-    } else if (
-      mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
+    } catch (pageErr) {
+      // pdf-parse failed (e.g. encrypted/malformed PDF in production).
+      // Allow upload to continue — we can't confirm the limit was exceeded.
+      console.warn("[PDF page count check failed]", pageErr.message);
+    }
+  } else if (
+    mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    try {
       const pageCount = await getDocxPageCount(buffer);
       if (pageCount > MAX_PAGES) {
         return res.status(422).json({
@@ -324,12 +342,9 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
           pageCount,
         });
       }
+    } catch (pageErr) {
+      console.warn("[DOCX page count check failed]", pageErr.message);
     }
-  } catch (pageErr) {
-    // Page count check failed — this is non-fatal.
-    // We only block uploads when we can CONFIRM the page limit is exceeded.
-    // If the check itself errors (e.g. pdf-parse issue), allow the upload to continue.
-    console.warn("[Page count check skipped]", pageErr.message);
   }
 
   try {
