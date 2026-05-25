@@ -256,18 +256,7 @@ function RagSourceBadge({
       );
     }
 
-    // PDF / DOCX: force download (open-in-tab broken in prod)
-    return (
-      <a
-        href={url}
-        download={src}
-        title={`Download ${src}`}
-        className={badgeBase}
-      >
-        {src}
-        <ArrowDown size={9} className="shrink-0 opacity-70" />
-      </a>
-    );
+    // PDF / DOCX: static badge (Cloudinary URLs unreliable in prod)
   }
 
   // No URL — static badge
@@ -358,26 +347,20 @@ function AttachmentCard({ attachment }: { attachment: AttachmentMeta }) {
     );
   }
 
-  // ── PDF / DOCX: direct download (open-in-tab broken in prod for these types) ─
-  if (canOpen) {
+  // ── PDF / DOCX: static non-clickable card (Cloudinary URLs unreliable in prod) ─
+  {
     const accentClass = isPdf ? "bg-red-500/20" : "bg-indigo-500/20";
     const iconClass   = isPdf ? "text-red-300"  : "text-indigo-300";
     return (
-      <a
-        href={viewUrl}
-        download={attachment.filename}
-        className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px] hover:bg-zinc-600/80 dark:hover:bg-white/20 transition-colors cursor-pointer no-underline"
-        title="Download file"
-      >
+      <div className="flex items-center gap-2.5 bg-zinc-700/80 dark:bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2.5 border border-zinc-600/40 dark:border-white/20 w-fit max-w-[260px]">
         <div className={`shrink-0 w-8 h-8 rounded-lg ${accentClass} flex items-center justify-center`}>
           <FileText size={16} className={iconClass} />
         </div>
-        <div className="min-w-0 flex-1 text-left">
+        <div className="min-w-0 flex-1">
           <div className="text-xs font-medium text-white truncate">{attachment.filename}</div>
-          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)} · Download</div>
+          <div className="text-[10px] text-white/60">{formatBytes(attachment.size)}</div>
         </div>
-        <ArrowDown size={13} className="shrink-0 text-white/50" />
-      </a>
+      </div>
     );
   }
 
